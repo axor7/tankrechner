@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tankrechner – Spritkosten fair teilen</title>
+  <meta name="description" content="Route mit Zwischenstopps planen, aktuelle Spritpreise nutzen und Tankkosten fair auf wechselnde Mitfahrer aufteilen.">
+  <meta name="theme-color" content="#0f766e">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⛽</text></svg>">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="stylesheet" href="css/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js" defer></script>
+  <script type="module" src="js/app.js"></script>
+</head>
+<body data-tab="route">
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo" aria-hidden="true">⛽</span>
+      <div>
+        <h1>Tankrechner</h1>
+        <p class="tagline">Spritkosten fair teilen</p>
+      </div>
+    </div>
+    <div id="summary" class="summary" aria-live="polite"></div>
+    <details class="menu">
+      <summary class="icon-btn big" aria-label="Menü">☰</summary>
+      <div class="menu-list">
+        <button type="button" id="btn-example">✨ Beispiel laden</button>
+        <button type="button" id="btn-export">⬇ Daten exportieren</button>
+        <button type="button" id="btn-import">⬆ Daten importieren</button>
+        <button type="button" id="btn-reset" class="danger">🗑 Alles zurücksetzen</button>
+      </div>
+      <input type="file" id="file-import" accept="application/json,.json" hidden>
+    </details>
+  </header>
+
+  <main class="layout">
+    <aside id="panel" class="panel">
+      <nav id="tabs" class="tabs" role="tablist"></nav>
+      <div id="panel-content"></div>
+      <footer class="foot">
+        Alle Daten bleiben in deinem Browser. Karte © OpenStreetMap-Mitwirkende · Routing OSRM · Adresssuche Photon · Spritpreise tankerkoenig.de (CC BY 4.0)
+      </footer>
+    </aside>
+    <section class="map-wrap">
+      <div id="map" aria-label="Karte"></div>
+      <div class="map-loading">Route wird berechnet …</div>
+    </section>
+  </main>
+</body>
+</html>
