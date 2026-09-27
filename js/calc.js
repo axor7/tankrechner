@@ -20,7 +20,7 @@ export function legCost(km, snap) {
 
 /** Teilstrecken in Fahrtrichtung. legIndex bezieht sich immer auf die Hin-Reihenfolge. */
 export function directedLegs(snapLegs, direction) {
-  const legs = snapLegs.map((l, i) => ({ legIndex: i, from: l.from, to: l.to, km: l.km }));
+  const legs = snapLegs.map((l, i) => ({ legIndex: i, from: l.from, to: l.to, km: l.km, min: l.min || 0 }));
   if (direction !== 'rueck') return legs;
   return legs.reverse().map((l) => ({ ...l, from: l.to, to: l.from }));
 }
@@ -47,20 +47,95 @@ export function ridersOnLeg(trip, i, legCount) {
   return s;
 }
 
+// ---------- Adressen, die Personen gehören ("Auto-Modus") ----------
+
+/** Sind im Snapshot Adressen Personen zugeordnet? Dann werden Teilstrecken automatisch berechnet. */
+export const hasOwners = (snap) => !!snap?.stops?.some((s) => s.owners?.length);
+
+export function haversine(a, b) {
+  const R = 6371;
+  const toRad = (x) => (x * Math.PI) / 180;
+  const dLat = toRad(b[0] - a[0]);
+  const dLng = toRad(b[1] - a[1]);
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(a[0])) * Math.cos(toRad(b[0])) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+
+/** Eindeutiger Schlüssel für eine Stoppfolge (zum Zwischenspeichern berechneter Routen). */
+export const routeKey = (stops) => stops.map((s) => `${s.lat.toFixed(5)},${s.lng.toFixed(5)}`).join(';');
+
+/** Reihenfolge aller Stopps für eine Richtung (Rückfahrt: eigene Reihenfolge, sonst umgekehrt). */
+export function orderedStops(snap, direction) {
+  if (direction !== 'rueck') return snap.stops;
+  const byId = new Map(snap.stops.map((x) => [x.id, x]));
+  const order = (snap.returnOrder || []).map((id) => byId.get(id)).filter(Boolean);
+  return order.length === snap.stops.length ? order : [...snap.stops].reverse();
+}
+
+/** Stopps, die bei dieser Fahrt wirklich angefahren werden: Adressen ohne Zuordnung immer,
+ *  zugeordnete nur, wenn mindestens eine ihrer Personen mitfährt. */
+export function plannedStops(trip, snap, direction) {
+  const people = tripPeople(trip);
+  return orderedStops(snap, direction).filter((x) => !x.owners?.length || x.owners.some((o) => people.has(o)));
+}
+
+/** Grobe Schätzung (Luftlinie × 1,3), bis die echte Route berechnet ist. */
+function estimateLegs(stops) {
+  return stops.slice(1).map((x, i) => {
+    const km = Math.round(haversine([stops[i].lat, stops[i].lng], [x.lat, x.lng]) * 13) / 10;
+    return { km, min: (km / 70) * 60 };
+  });
+}
+
+/**
+ * Teilstrecken einer Fahrt in Fahrtrichtung, jeweils mit den Personen im Auto.
+ * Auto-Modus: Wer einer Adresse zugeordnet ist, sitzt auf dem Hinweg ab seiner Adresse
+ * im Auto und auf dem Rückweg bis zu seiner Adresse. Ohne Zuordnung: ganze Fahrt.
+ * Sonst: manuell gepflegte Teilstrecken (trip.legs).
+ */
+export function resolveLegs(trip, snap, direction = 'hin') {
+  if (!hasOwners(snap)) {
+    const n = snap.legs.length;
+    return {
+      auto: false,
+      legs: directedLegs(snap.legs, direction).map((l) => ({ ...l, min: snap.legs[l.legIndex].min || 0, riders: ridersOnLeg(trip, l.legIndex, n) })),
+    };
+  }
+  const stops = plannedStops(trip, snap, direction);
+  if (stops.length < 2) return { auto: true, legs: [], stops };
+  const key = routeKey(stops);
+  const known = snap.routes?.[key];
+  const dist = known && known.length === stops.length - 1 ? known : estimateLegs(stops);
+  const people = [...tripPeople(trip)];
+  const owned = new Map(people.map((p) => [p, stops.flatMap((x, k) => (x.owners?.includes(p) ? [k] : []))]));
+  const legs = dist.map((d, i) => {
+    const riders = new Set(trip.driver ? [trip.driver] : []);
+    for (const p of people) {
+      const idx = owned.get(p);
+      if (!idx.length) riders.add(p);
+      else if (direction === 'rueck' ? i < Math.max(...idx) : i >= Math.min(...idx)) riders.add(p);
+    }
+    return { legIndex: i, from: stops[i].name, to: stops[i + 1].name, km: d.km, min: d.min || 0, riders };
+  });
+  return { auto: true, legs, stops, key, estimated: dist !== known };
+}
+
 /**
  * Berechnet eine einzelne Fahrt.
  * opts.mode: 'segment' (jede Teilstrecke wird unter den dort Mitfahrenden geteilt)
  *            'equal'   (Gesamtkosten gleich auf alle Mitfahrenden der Fahrt)
  * opts.driverPays: zahlt der Fahrer seinen Anteil selbst mit?
  * opts.includeExtra: Nebenkosten (ct/km) mit abrechnen? (Standard: ja)
+ * direction: 'hin' | 'rueck' (wichtig, wenn Adressen Personen zugeordnet sind)
  */
-export function calcTrip(trip, snap, opts = {}) {
+export function calcTrip(trip, snap, opts = {}, direction = 'hin') {
   const mode = opts.mode || 'segment';
   const driverPays = opts.driverPays !== false;
   const withExtra = opts.includeExtra !== false;
-  const n = snap.legs.length;
+  const resolved = resolveLegs(trip, snap, direction);
   const shares = {};
   const km = {};
+  const minutes = {};
   let total = 0;
   let fuelCost = 0;
   let extraCost = 0;
@@ -70,25 +145,24 @@ export function calcTrip(trip, snap, opts = {}) {
   const legDetails = [];
   const add = (obj, k, v) => { obj[k] = (obj[k] || 0) + v; };
 
-  for (let i = 0; i < n; i++) {
-    const leg = snap.legs[i];
+  for (const leg of resolved.legs) {
     const c = legCost(leg.km, snap);
     const cost = withExtra ? c.total : c.fuel;
-    const riders = ridersOnLeg(trip, i, n);
+    const { riders } = leg;
     total += cost;
     fuelCost += c.fuel;
     if (withExtra) extraCost += c.extra;
     else extraExcluded += c.extra;
     liters += c.liters;
     dist += leg.km;
-    for (const p of riders) add(km, p, leg.km);
+    for (const p of riders) { add(km, p, leg.km); add(minutes, p, leg.min); }
     let payers = [...riders];
     if (!driverPays && trip.driver) {
       payers = payers.filter((p) => p !== trip.driver);
       if (!payers.length) payers = [trip.driver];
     }
     const per = payers.length ? cost / payers.length : 0;
-    legDetails.push({ legIndex: i, km: leg.km, cost, riders: [...riders], payers, per });
+    legDetails.push({ ...leg, cost, riders: [...riders], payers, per });
     if (mode === 'segment') for (const p of payers) add(shares, p, per);
   }
 
@@ -101,13 +175,16 @@ export function calcTrip(trip, snap, opts = {}) {
     for (const p of payers) add(shares, p, total / payers.length);
   }
 
-  return { total, fuelCost, extraCost, extraExcluded, liters, km: dist, shares, kmPerPerson: km, payer: trip.driver || null, legs: legDetails };
+  return {
+    total, fuelCost, extraCost, extraExcluded, liters, km: dist, shares, kmPerPerson: km, minPerPerson: minutes,
+    payer: trip.driver || null, legs: legDetails, auto: resolved.auto, estimated: !!resolved.estimated,
+  };
 }
 
 /** Summiert beliebig viele Fahrten: [{trip, snap, date, direction}] */
 export function aggregate(entries, opts = {}) {
   const persons = {};
-  const get = (id) => (persons[id] ||= { share: 0, paid: 0, km: 0, trips: 0 });
+  const get = (id) => (persons[id] ||= { share: 0, paid: 0, km: 0, min: 0, trips: 0 });
   let total = 0;
   let fuelCost = 0;
   let extraCost = 0;
@@ -116,7 +193,7 @@ export function aggregate(entries, opts = {}) {
   let km = 0;
   const trips = [];
   for (const e of entries) {
-    const r = calcTrip(e.trip, e.snap, opts);
+    const r = calcTrip(e.trip, e.snap, opts, e.direction);
     total += r.total;
     fuelCost += r.fuelCost;
     extraCost += r.extraCost;
@@ -124,7 +201,7 @@ export function aggregate(entries, opts = {}) {
     liters += r.liters;
     km += r.km;
     for (const [p, v] of Object.entries(r.shares)) get(p).share += v;
-    for (const [p, v] of Object.entries(r.kmPerPerson)) { get(p).km += v; get(p).trips += 1; }
+    for (const [p, v] of Object.entries(r.kmPerPerson)) { get(p).km += v; get(p).min += r.minPerPerson[p] || 0; get(p).trips += 1; }
     if (r.payer) get(r.payer).paid += r.total;
     trips.push({ ...e, result: r });
   }

@@ -1,3 +1,4 @@
+import { haversine } from './calc.js';
 // Externe Dienste: Photon (Adresssuche), OSRM (Routing), Tankerkönig (Spritpreise).
 
 const PHOTON = 'https://photon.komoot.io';
@@ -119,14 +120,6 @@ export function samplePoints(coords, stops, everyKm = 12, max = 12) {
   return Array.from({ length: max }, (_, i) => pts[Math.floor(i * step)]);
 }
 
-export function haversine(a, b) {
-  const R = 6371;
-  const toRad = (x) => (x * Math.PI) / 180;
-  const dLat = toRad(b[0] - a[0]);
-  const dLng = toRad(b[1] - a[1]);
-  const h = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(a[0])) * Math.cos(toRad(b[0])) * Math.sin(dLng / 2) ** 2;
-  return 2 * R * Math.asin(Math.sqrt(h));
-}
 
 /** Abstand eines Punkts zur Route in km (grob über Geometriepunkte). */
 export function distanceToRoute(coords, p) {

@@ -1,9 +1,9 @@
 // Einstiegspunkt: Layout, Tabs, Strecken-Tab und Karten-Anbindung.
-import { state, update, subscribe, validStops, uid, effectivePrice, currentLegs, replaceState, defaultState } from './state.js';
+import { state, update, subscribe, validStops, uid, effectivePrice, currentLegs, replaceState, defaultState, returnStops, returnOrderIds, isCustomReturn, makeSnapshot, stopName } from './state.js';
 import { searchPlaces, reverseGeocode, fetchRoute } from './api.js';
 import { MapView } from './map.js';
-import { legCost, FUELS } from './calc.js';
-import { h, stat, fmtEuro, fmtKm, fmtDuration, fmtPrice, debounce, toast } from './ui.js';
+import { legCost, FUELS, DIRECTIONS, hasOwners, plannedStops, routeKey } from './calc.js';
+import { h, stat, chip, fmtEuro, fmtKm, fmtDuration, fmtPrice, debounce, toast } from './ui.js';
 import { renderFuelTab, stationSelected, startAutoRefresh } from './tab-fuel.js';
 import { renderTripsTab } from './tab-trips.js';
 import { renderBillTab } from './tab-bill.js';
@@ -26,22 +26,23 @@ let routeSeq = 0;
 const recalcRoute = debounce(async () => {
   const stops = validStops();
   if (stops.length < 2) {
-    update((s) => { s.route = null; s.alternatives = []; });
+    update((s) => { s.route = null; s.returnRoute = null; s.alternatives = []; });
     return;
   }
   const seq = ++routeSeq;
   document.body.classList.add('loading-route');
   try {
     const routes = await fetchRoute(stops);
+    const back = state.roundTrip && isCustomReturn() ? (await fetchRoute(returnStops()))[0] : null;
     if (seq !== routeSeq) return;
     update((s) => {
       s.route = routes[0];
+      s.returnRoute = back;
       s.alternatives = routes.length > 1 ? routes : [];
       s.selectedAlt = 0;
       if (s.exampleFresh) {
         // Beispiel: Wochen mit den echten Kilometern der berechneten Route versehen
-        const legs = currentLegs(s);
-        for (const w of Object.values(s.weeks)) w.snap.legs = legs;
+        for (const w of Object.values(s.weeks)) w.snap = { ...makeSnapshot(s), price: w.snap.price };
         delete s.exampleFresh;
       }
     });
@@ -52,6 +53,62 @@ const recalcRoute = debounce(async () => {
     if (seq === routeSeq) document.body.classList.remove('loading-route');
   }
 }, 250);
+
+let returnSeq = 0;
+const recalcReturn = debounce(async () => {
+  const seq = ++returnSeq;
+  if (!state.roundTrip || !isCustomReturn() || validStops().length < 2) { update((s) => { s.returnRoute = null; }); return; }
+  try {
+    const [r] = await fetchRoute(returnStops());
+    if (seq === returnSeq) update((s) => { s.returnRoute = r; });
+  } catch (e) { toast(`Rückweg konnte nicht berechnet werden: ${e.message}`, 'error'); }
+}, 250);
+
+// ---------- Routen für einzelne Fahrten (ausgelassene Adressen) nachladen ----------
+
+const routeInflight = new Set();
+const routeFailed = new Set();
+
+/** Alle Stoppfolgen, die in eingetragenen Fahrten vorkommen, aber noch keine echte Route haben. */
+function missingRoutes(s) {
+  const missing = new Map();
+  for (const w of Object.values(s.weeks)) {
+    if (!hasOwners(w.snap)) continue;
+    for (const d of Object.values(w.days)) {
+      for (const dir of DIRECTIONS) {
+        if (!d[dir]) continue;
+        const stops = plannedStops(d[dir], w.snap, dir);
+        if (stops.length < 2) continue;
+        const key = routeKey(stops);
+        if (!w.snap.routes?.[key]) missing.set(key, { stops, snap: w.snap });
+      }
+    }
+  }
+  return missing;
+}
+
+function fillFromCache(s) {
+  for (const [key, { snap }] of missingRoutes(s)) {
+    if (s.routeCache[key]) { snap.routes ||= {}; snap.routes[key] = s.routeCache[key]; }
+  }
+}
+
+const ensureRoutes = debounce(async () => {
+  let missing = missingRoutes(state);
+  if ([...missing.keys()].some((k) => state.routeCache?.[k])) {
+    update((s) => { s.routeCache ||= {}; fillFromCache(s); });
+    missing = missingRoutes(state);
+  }
+  for (const [key, { stops }] of missing) {
+    if (routeInflight.has(key) || routeFailed.has(key)) continue;
+    routeInflight.add(key);
+    try {
+      const [r] = await fetchRoute(stops);
+      const legs = r.legs.map((l) => ({ km: Math.round(l.distance / 100) / 10, min: l.duration / 60 }));
+      update((s) => { s.routeCache ||= {}; s.routeCache[key] = legs; fillFromCache(s); });
+    } catch { routeFailed.add(key); } finally { routeInflight.delete(key); }
+  }
+}, 400);
 
 function stopsChanged() {
   update(() => {});
@@ -179,13 +236,60 @@ function stopRow(stop, i, n) {
     },
   }, '📍') : null;
 
-  return h('div', { class: `stop-row ${stop.lat == null ? 'empty' : ''}` },
+  const owners = stop.owners || [];
+  const toggleOwner = (pid) => update((s) => {
+    const st = s.stops.find((x) => x.id === stop.id);
+    st.owners = (st.owners || []).includes(pid) ? st.owners.filter((x) => x !== pid) : [...(st.owners || []), pid];
+  });
+  const ownerLine = state.persons.length > 1 ? h('div', { class: 'owner-line' },
+    h('span', { class: 'owner-label', title: 'Wessen Adresse ist das? Diese Person steigt hier zu bzw. wird hier abgesetzt.' }, '👤'),
+    state.persons.map((p) => chip(p, { active: owners.includes(p.id), onClick: () => toggleOwner(p.id), title: `${p.name}: ${owners.includes(p.id) ? 'wohnt hier – antippen zum Entfernen' : 'hier zuordnen'}` })),
+  ) : null;
+
+  return h('div', { class: 'stop-block' }, h('div', { class: `stop-row ${stop.lat == null ? 'empty' : ''}` },
     h('span', { class: `pin-badge pin-${kind}` }, letter),
     h('div', { class: 'stop-input' }, input, list),
     geoBtn,
     h('button', { class: 'icon-btn', title: 'Nach oben', type: 'button', disabled: i === 0, onclick: () => move(-1) }, '↑'),
     h('button', { class: 'icon-btn', title: 'Nach unten', type: 'button', disabled: i === n - 1, onclick: () => move(1) }, '↓'),
     h('button', { class: 'icon-btn danger', title: 'Entfernen', type: 'button', onclick: () => removeStop(stop.id) }, '✕'),
+  ), ownerLine);
+}
+
+function returnCard() {
+  const valid = validStops();
+  if (!state.roundTrip || valid.length < 3) return null;
+  const n = valid.length;
+  const order = returnOrderIds();
+  const byId = new Map(valid.map((x, i) => [x.id, { stop: x, i }]));
+  const move = (k, dir) => {
+    update((s) => {
+      const o = returnOrderIds(s);
+      [o[k], o[k + dir]] = [o[k + dir], o[k]];
+      s.returnOrder = o;
+    });
+    recalcReturn();
+  };
+  const back = state.returnRoute;
+  const custom = isCustomReturn();
+  return h('section', { class: 'card' },
+    h('h2', {}, 'Rückfahrt – Reihenfolge'),
+    h('p', { class: 'hint' }, 'In welcher Reihenfolge wird auf dem Rückweg abgesetzt? Das Ziel des Hinwegs bleibt der Startpunkt.'),
+    h('ol', { class: 'return-order' }, order.map((id, k) => {
+      const { stop, i } = byId.get(id);
+      const kind = i === 0 ? 'start' : i === n - 1 ? 'end' : 'via';
+      const letter = i === 0 ? 'A' : i === n - 1 ? 'B' : String(i);
+      const who = (stop.owners || []).map((o) => state.persons.find((p) => p.id === o)?.name).filter(Boolean).join(', ');
+      return h('li', {},
+        h('span', { class: 'ret-num' }, `${k + 1}.`),
+        h('span', { class: `pin-badge pin-${kind}` }, letter),
+        h('span', { class: 'ret-name' }, stopName(stop, i, n), who ? h('small', { class: 'muted' }, ` · ${who}`) : null),
+        h('button', { class: 'icon-btn', type: 'button', title: 'Früher anfahren', disabled: k <= 1, onclick: () => move(k, -1) }, '↑'),
+        h('button', { class: 'icon-btn', type: 'button', title: 'Später anfahren', disabled: k === 0 || k === order.length - 1, onclick: () => move(k, 1) }, '↓'),
+      );
+    })),
+    custom && back ? h('div', { class: 'muted small' }, `Rückweg: ${fmtKm(back.distance / 1000)} · ${fmtDuration(back.duration)} (auf der Karte orange gestrichelt)`) : null,
+    custom ? h('button', { type: 'button', class: 'btn btn-small btn-ghost', onclick: () => { update((s) => { s.returnOrder = null; }); recalcReturn(); } }, '↺ Wie Hinweg (umgekehrt)') : null,
   );
 }
 
@@ -212,10 +316,13 @@ function renderRouteTab(el) {
         }, '⇅ Umdrehen'),
       ),
       h('label', { class: 'check' },
-        h('input', { type: 'checkbox', checked: state.roundTrip, onchange: (e) => update((s) => { s.roundTrip = e.target.checked; }) }),
-        ' Rückfahrt über dieselbe Strecke (umgekehrt)'),
+        h('input', { type: 'checkbox', checked: state.roundTrip, onchange: (e) => { update((s) => { s.roundTrip = e.target.checked; }); recalcReturn(); } }),
+        ' Mit Rückfahrt'),
+      state.persons.length > 1 ? h('p', { class: 'hint small' }, '👤 Tippe unter einer Adresse auf die Personen, die dort wohnen bzw. zusteigen. Sie zahlen dann auf dem Hinweg erst ab ihrer Adresse und auf dem Rückweg nur bis dorthin. Fährt jemand an einem Tag nicht mit, wird seine Adresse ausgelassen und die Strecke für diese Fahrt neu berechnet.') : null,
     ),
   );
+  const rc = returnCard();
+  if (rc) el.append(rc);
 
   if (route && legs.length) {
     const total = legs.reduce((a, l) => a + l.km, 0);
@@ -280,8 +387,11 @@ let mapKeys = {};
 function syncMap() {
   const stopsKey = JSON.stringify(state.stops.map((s) => [s.id, s.lat, s.lng, s.label]));
   if (stopsKey !== mapKeys.stops) { map.setStops(state.stops); mapKeys.stops = stopsKey; }
-  const routeKey = [state.route?.distance, state.route?.coords?.length, state.alternatives.length, state.selectedAlt].join('|');
-  if (routeKey !== mapKeys.route) { map.setRoute(state.route, state.alternatives, state.selectedAlt || 0); mapKeys.route = routeKey; }
+  const rKey = [state.route?.distance, state.route?.coords?.length, state.alternatives.length, state.selectedAlt, state.returnRoute?.distance, state.roundTrip].join('|');
+  if (rKey !== mapKeys.route) {
+    map.setRoute(state.route, state.alternatives, state.selectedAlt || 0, state.roundTrip && isCustomReturn() ? state.returnRoute : null);
+    mapKeys.route = rKey;
+  }
   const tk = FUELS[state.car.fuel]?.tk;
   const stKey = [state.stations.length, state.stations[0]?.id, state.price.stationId, tk, state.price.updatedAt].join('|');
   if (stKey !== mapKeys.stations) {
@@ -329,6 +439,7 @@ function render() {
   if (focusedId) panel.querySelector(`[data-focus-key="${focusedId}"]`)?.focus();
   renderSummary();
   syncMap();
+  ensureRoutes();
 }
 
 // ---------- Menü: Export / Import / Beispiel ----------

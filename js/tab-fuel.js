@@ -209,7 +209,7 @@ function weeklyLiters() {
   let liters = 0;
   if (w) {
     for (const day of Object.values(w.days)) {
-      for (const d of DIRECTIONS) if (day[d]) liters += calcTrip(day[d], w.snap, state.split).liters;
+      for (const d of DIRECTIONS) if (day[d]) liters += calcTrip(day[d], w.snap, state.split, d).liters;
     }
   }
   if (liters > 0) return { liters, source: 'laut Fahrtenplan dieser Woche' };

@@ -152,3 +152,71 @@ test('Nebenkosten ausschalten: nur Sprit wird abgerechnet', () => {
   close(on.total, 15);
   close(on.extraExcluded, 0);
 });
+
+// ---------- Adressen gehören Personen ----------
+import { resolveLegs, plannedStops, routeKey, hasOwners } from '../js/calc.js';
+
+const A = { id: 'a', name: 'Ich', lat: 49.0, lng: 8.4, owners: ['ich'] };
+const B = { id: 'b', name: 'Anna', lat: 49.0, lng: 8.5, owners: ['anna'] };
+const C = { id: 'c', name: 'Ben', lat: 49.0, lng: 8.6, owners: ['ben'] };
+const Z = { id: 'z', name: 'Arbeit', lat: 49.0, lng: 8.9, owners: [] };
+const km = (...list) => list.map((k) => ({ km: k, min: k }));
+const autoSnap = (extra = {}) => ({
+  legs: [], consumption: 10, price: 1, extraPerKm: 0, // 0,10 € pro km
+  stops: [A, B, C, Z],
+  routes: {
+    [routeKey([A, B, C, Z])]: km(10, 20, 30),
+    [routeKey([Z, C, B, A])]: km(30, 20, 10),
+    [routeKey([Z, B, C, A])]: km(40, 20, 25),
+    [routeKey([A, C, Z])]: km(25, 30),
+  },
+  ...extra,
+});
+const all = { driver: 'ich', legs: [['ich', 'anna', 'ben']] };
+
+test('Auto: Hinweg – jeder zahlt ab seiner Adresse', () => {
+  const s = autoSnap();
+  assert.ok(hasOwners(s));
+  const r = calcTrip(all, s, {}, 'hin');
+  close(r.total, 6);
+  close(r.shares.ich, 3); // 1 + 1 + 1
+  close(r.shares.anna, 2); // ab Anna: 1 + 1
+  close(r.shares.ben, 1); // ab Ben: 1
+  close(r.kmPerPerson.ben, 30);
+  close(r.minPerPerson.anna, 50);
+});
+
+test('Auto: Rückweg – jeder zahlt bis zu seiner Adresse', () => {
+  const r = calcTrip(all, autoSnap(), {}, 'rueck');
+  close(r.shares.ben, 1);
+  close(r.shares.anna, 2);
+  close(r.shares.ich, 3);
+});
+
+test('Auto: eigene Reihenfolge auf dem Rückweg (Anna zuerst absetzen)', () => {
+  const r = calcTrip(all, autoSnap({ returnOrder: ['z', 'b', 'c', 'a'] }), {}, 'rueck');
+  assert.deepEqual(r.legs.map((l) => `${l.from}>${l.to}`), ['Arbeit>Anna', 'Anna>Ben', 'Ben>Ich']);
+  close(r.total, 8.5);
+  close(r.shares.anna, 4 / 3); // nur Arbeit → Anna
+  close(r.shares.ben, 4 / 3 + 1); // bis zu Ben
+  close(r.shares.ich, 4 / 3 + 1 + 2.5);
+});
+
+test('Auto: Adresse wird ausgelassen, wenn die Person nicht mitfährt', () => {
+  const s = autoSnap();
+  const trip = { driver: 'ich', legs: [['ich', 'ben']] };
+  assert.deepEqual(plannedStops(trip, s, 'hin').map((x) => x.id), ['a', 'c', 'z']);
+  const r = calcTrip(trip, s, {}, 'hin');
+  assert.equal(r.estimated, false);
+  close(r.km, 55);
+  close(r.shares.ich, 2.5 + 1.5);
+  close(r.shares.ben, 1.5);
+});
+
+test('Auto: fehlende Route wird geschätzt und markiert', () => {
+  const s = autoSnap();
+  const r = resolveLegs({ driver: 'ich', legs: [['ich', 'anna']] }, s, 'hin');
+  assert.equal(r.estimated, true);
+  assert.equal(r.legs.length, 2);
+  assert.ok(r.legs.every((l) => l.km > 0));
+});

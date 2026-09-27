@@ -421,3 +421,19 @@ details.more > * + * { margin-top: .5rem; }
 }
 .switch:checked { background: var(--primary); }
 .switch:checked::after { transform: translateX(1.3rem); }
+
+/* Adressen Personen zuordnen */
+.stop-block { display: flex; flex-direction: column; gap: .2rem; }
+.owner-line { display: flex; flex-wrap: wrap; align-items: center; gap: .25rem; padding-left: 2.1rem; }
+.owner-label { font-size: .8rem; color: var(--muted); }
+.owner-line .chip { font-size: .72rem; padding: .08rem .45rem; text-decoration: none; opacity: .55; }
+.owner-line .chip.active { opacity: 1; }
+.return-order { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .3rem; }
+.return-order li { display: flex; align-items: center; gap: .4rem; background: var(--surface-2); border-radius: 10px; padding: .3rem .4rem; }
+.ret-num { width: 1.4rem; text-align: right; color: var(--muted); font-size: .85rem; }
+.ret-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .9rem; }
+.trip-legs { width: 100%; border-collapse: collapse; font-size: .8rem; }
+.trip-legs td { padding: .3rem .2rem; border-top: 1px solid var(--border); vertical-align: top; }
+.trip-legs td:last-child { text-align: right; white-space: nowrap; }
+.dots { display: inline-flex; gap: 3px; margin-top: 2px; }
+.dots .dot { width: .6rem; height: .6rem; }

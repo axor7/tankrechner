@@ -1,5 +1,5 @@
 // Beispieldaten zum Ausprobieren.
-import { defaultState, uid, COLORS } from './state.js';
+import { defaultState, uid, COLORS, makeSnapshot } from './state.js';
 import { addDays, mondayOf, toISODate, weekDates } from './calc.js';
 
 export function loadExample() {
@@ -8,23 +8,18 @@ export function loadExample() {
   s.persons = [me, anna, ben, clara];
   s.defaultDriver = me.id;
   s.stops = [
-    { id: uid(), label: 'Karlsruhe Hauptbahnhof, 76137 Karlsruhe', lat: 48.9936, lng: 8.4011 },
-    { id: uid(), label: 'Pforzheim Hauptbahnhof, 75175 Pforzheim', lat: 48.8934, lng: 8.7026 },
-    { id: uid(), label: 'Stuttgart Hauptbahnhof, 70173 Stuttgart', lat: 48.784, lng: 9.1817 },
+    { id: uid(), label: 'Karlsruhe Hauptbahnhof, 76137 Karlsruhe', lat: 48.9936, lng: 8.4011, owners: [me.id] },
+    { id: uid(), label: 'Ettlingen Stadtbahnhof, 76275 Ettlingen', lat: 48.9406, lng: 8.4075, owners: [anna.id] },
+    { id: uid(), label: 'Pforzheim Hauptbahnhof, 75175 Pforzheim', lat: 48.8934, lng: 8.7026, owners: [ben.id, clara.id] },
+    { id: uid(), label: 'Stuttgart Hauptbahnhof, 70173 Stuttgart', lat: 48.784, lng: 9.1817, owners: [] },
   ];
   s.car = { consumption: 6.5, fuel: 'e10', extraPerKm: 0 };
   s.price = { ...s.price, mode: 'manual', manual: 1.749 };
-  s.exampleFresh = true;
+  s.exampleFresh = true; // echte Kilometer kommen, sobald die Route berechnet ist
 
-  const snap = {
-    legs: [{ from: 'Karlsruhe Hauptbahnhof', to: 'Pforzheim Hauptbahnhof', km: 32 }, { from: 'Pforzheim Hauptbahnhof', to: 'Stuttgart Hauptbahnhof', km: 49 }],
-    consumption: 6.5, price: 1.749, extraPerKm: 0, fuel: 'e10', roundTrip: true, at: Date.now(),
-  };
-  // Ich und Anna starten in Karlsruhe, Ben und Clara steigen in Pforzheim zu.
-  const trip = (people, driver = me.id) => ({
-    driver,
-    legs: [people.filter((p) => p === me.id || p === anna.id), people],
-  });
+  // Jeder steigt an seiner eigenen Adresse zu – die Teilstrecken ergeben sich automatisch.
+  const snap = makeSnapshot(s);
+  const trip = (people, driver = me.id) => ({ driver, legs: [[...people]] });
   const all = [me.id, anna.id, ben.id, clara.id];
 
   const thisWeek = mondayOf(toISODate(new Date()));
@@ -43,7 +38,7 @@ export function loadExample() {
       [d[1]]: { hin: trip(all), rueck: trip([me.id, anna.id, clara.id]) }, // Ben fährt nicht mit zurück
       [d[2]]: { hin: trip([me.id, anna.id, ben.id]), rueck: trip(all) }, // Clara kommt nur zurück mit
       [d[3]]: { hin: trip([me.id, anna.id, ben.id]), rueck: trip([me.id, anna.id, ben.id]) },
-      [d[4]]: { hin: trip([me.id, anna.id]), rueck: trip([me.id, anna.id]) },
+      [d[4]]: { hin: trip([me.id, ben.id]), rueck: trip([me.id, ben.id]) }, // Anna fehlt → Ettlingen wird ausgelassen
     },
   };
   return s;

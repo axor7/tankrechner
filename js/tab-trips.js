@@ -1,7 +1,7 @@
 // Tab "Fahrten": Mitfahrer verwalten und Wochenplan (wer fährt wann welche Teilstrecke mit).
 import { state, update, getWeek, makeSnapshot, uid, COLORS, personById } from './state.js';
-import { calcTrip, aggregate, directedLegs, weekDates, addDays, isoWeek, mondayOf, toISODate, DIRECTIONS, ridersOnLeg, weekdayIndex } from './calc.js';
-import { h, chip, fmtEuro, fmtKm, fmtDate, fmtPrice, toast } from './ui.js';
+import { calcTrip, aggregate, directedLegs, weekDates, addDays, isoWeek, mondayOf, toISODate, DIRECTIONS, ridersOnLeg, weekdayIndex, hasOwners, tripPeople } from './calc.js';
+import { h, chip, fmtEuro, fmtKm, fmtDate, fmtPrice, fmtDuration, toast } from './ui.js';
 
 const openLegs = new Set(); // aufgeklappte Teilstrecken-Editoren
 const DIR_LABEL = { hin: 'Hinfahrt', rueck: 'Rückfahrt' };
@@ -24,6 +24,7 @@ function personsCard() {
     if (used && !confirm(`${p.name} kommt in gespeicherten Fahrten vor. Trotzdem löschen? Die Fahrten werden dann ohne ${p.name} neu berechnet.`)) return;
     update((s) => {
       s.persons = s.persons.filter((x) => x.id !== p.id);
+      for (const st of s.stops) st.owners = (st.owners || []).filter((id) => id !== p.id);
       if (s.defaultDriver === p.id) s.defaultDriver = s.persons[0]?.id;
       for (const w of Object.values(s.weeks)) {
         for (const d of Object.values(w.days)) {
@@ -73,7 +74,8 @@ function normalizeTrip(trip, legCount) {
 
 function snapDiffers(a, b) {
   return a.price !== b.price || a.consumption !== b.consumption || a.extraPerKm !== b.extraPerKm
-    || a.roundTrip !== b.roundTrip || JSON.stringify(a.legs) !== JSON.stringify(b.legs);
+    || a.roundTrip !== b.roundTrip || JSON.stringify(a.legs) !== JSON.stringify(b.legs)
+    || JSON.stringify(a.stops || []) !== JSON.stringify(b.stops || []) || JSON.stringify(a.returnOrder || []) !== JSON.stringify(b.returnOrder || []);
 }
 
 // ---------- Wochen-Navigation & Aktionen ----------
@@ -153,8 +155,10 @@ function tripCell(monday, date, dir, trip, snap) {
     }, `＋ ${DIR_LABEL[dir]}`);
   }
 
+  const auto = hasOwners(snap);
   const n = snap.legs.length;
-  const res = calcTrip(trip, snap, state.split);
+  const res = calcTrip(trip, snap, state.split, dir);
+  const people = tripPeople(trip);
   const mutate = (fn) => update((s) => fn(s.weeks[monday].days[date][dir]));
 
   const toggle = (pid) => {
@@ -166,22 +170,33 @@ function tripCell(monday, date, dir, trip, snap) {
   };
 
   const chips = state.persons.map((p) => {
-    const count = Array.from({ length: n }, (_, i) => ridersOnLeg(trip, i, n).has(p.id)).filter(Boolean).length;
+    const total = res.legs.length;
+    const count = res.legs.filter((l) => l.riders.includes(p.id)).length;
+    const active = auto ? people.has(p.id) : count > 0;
     const share = res.shares[p.id];
     return chip(p, {
-      active: count > 0,
-      partial: count > 0 && count < n,
+      active,
+      partial: active && count < total,
       driver: p.id === trip.driver,
-      title: `${p.name}${count > 0 && count < n ? ` (fährt ${count} von ${n} Teilstrecken)` : ''}${share ? ` – ${fmtEuro(share)}` : ''}`,
+      title: `${p.name}${active && count < total ? ` (fährt ${count} von ${total} Teilstrecken)` : ''}${share ? ` – ${fmtEuro(share)}` : ''}`,
       onClick: () => toggle(p.id),
     });
   });
 
   const legsOpen = openLegs.has(key);
-  const legEditor = n > 1 && legsOpen ? h('table', { class: 'leg-matrix' },
+  const personOf = (id) => state.persons.find((p) => p.id === id);
+  // Adressen zugeordnet: Teilstrecken ergeben sich automatisch – nur anzeigen
+  const autoView = auto && legsOpen ? h('table', { class: 'trip-legs' }, h('tbody', {}, res.legs.map((l) => h('tr', {},
+    h('td', {},
+      h('div', {}, `${l.from} → ${l.to}`),
+      h('span', { class: 'dots' }, l.riders.map((id) => h('span', { class: 'dot', style: { '--pc': personOf(id)?.color || '#999' }, title: personOf(id)?.name }))),
+      h('small', { class: 'muted' }, ` ${l.riders.map((id) => personOf(id)?.name).filter(Boolean).join(', ')}`)),
+    h('td', {}, h('div', {}, fmtEuro(l.cost)), h('small', { class: 'muted' }, `${res.estimated ? '≈ ' : ''}${fmtKm(l.km)}${l.min ? ` · ${fmtDuration(l.min * 60)}` : ''}`)),
+  )))) : null;
+  const legEditor = auto ? autoView : n > 1 && legsOpen ? h('table', { class: 'leg-matrix' },
     h('thead', {}, h('tr', {}, h('th', {}, 'Teilstrecke'), state.persons.map((p) => h('th', { style: { color: p.color }, title: p.name }, p.name.slice(0, 3))))),
     h('tbody', {}, directedLegs(snap.legs, dir).map((leg) => h('tr', {},
-      h('td', {}, h('div', {}, `${leg.from} → ${leg.to}`), h('small', { class: 'muted' }, `${fmtKm(leg.km)} · ${fmtEuro(res.legs[leg.legIndex].cost)}`)),
+      h('td', {}, h('div', {}, `${leg.from} → ${leg.to}`), h('small', { class: 'muted' }, `${fmtKm(leg.km)} · ${fmtEuro(res.legs.find((l) => l.legIndex === leg.legIndex)?.cost)}`)),
       state.persons.map((p) => {
         const isDriver = p.id === trip.driver;
         return h('td', {}, h('input', {
@@ -199,7 +214,7 @@ function tripCell(monday, date, dir, trip, snap) {
   return h('div', { class: `trip ${legEditor ? 'expanded' : ''}` },
     h('div', { class: 'trip-head' },
       h('span', { class: 'trip-dir' }, dir === 'hin' ? '➜ Hin' : '⟲ Zurück'),
-      h('span', { class: 'trip-cost' }, fmtEuro(res.total)),
+      h('span', { class: 'trip-cost', title: res.estimated ? 'Strecke wird noch berechnet – vorläufig geschätzt' : '' }, `${res.estimated ? '≈ ' : ''}${fmtEuro(res.total)}`),
       h('button', { type: 'button', class: 'icon-btn danger small', title: 'Fahrt entfernen', onclick: () => update((s) => { s.weeks[monday].days[date][dir] = null; }) }, '✕'),
     ),
     h('div', { class: 'chips' }, chips),
@@ -210,10 +225,10 @@ function tripCell(monday, date, dir, trip, snap) {
           t.legs = t.legs.map((l) => (l.includes(t.driver) ? l : [...l, t.driver]));
         }),
       }, state.persons.map((p) => h('option', { value: p.id, selected: p.id === trip.driver }, p.name)))),
-      n > 1 ? h('button', {
+      auto || n > 1 ? h('button', {
         type: 'button', class: `link ${legsOpen ? 'open' : ''}`,
         onclick: () => { legsOpen ? openLegs.delete(key) : openLegs.add(key); update(() => {}); },
-      }, legsOpen ? 'Teilstrecken ▴' : 'Teilstrecken ▾') : null,
+      }, `${auto ? 'Strecke' : 'Teilstrecken'} ${legsOpen ? '▴' : '▾'}`) : null,
     ),
     legEditor,
   );
@@ -246,14 +261,16 @@ export function renderTripsTab(el) {
     return;
   }
 
-  el.append(h('p', { class: 'hint' }, 'Tippe auf Namen, um sie für eine Fahrt an- oder abzuwählen. Wer nur einen Teil der Strecke mitfährt (z. B. erst am Zwischenstopp zusteigt), stellst du über „Teilstrecken“ ein – schraffierte Namen fahren nur teilweise mit.'));
+  el.append(h('p', { class: 'hint' }, hasOwners(snap)
+    ? 'Tippe auf Namen, um sie für eine Fahrt an- oder abzuwählen. Die Teilstrecken ergeben sich aus den Adressen (Tab „Strecke“): Jeder zahlt hin ab seiner Adresse und zurück bis zu seiner Adresse. Wer nicht mitfährt, wird nicht angefahren. Unter „Strecke ▾“ siehst du die Details.'
+    : 'Tippe auf Namen, um sie für eine Fahrt an- oder abzuwählen. Wer nur einen Teil der Strecke mitfährt (z. B. erst am Zwischenstopp zusteigt), stellst du über „Teilstrecken“ ein – schraffierte Namen fahren nur teilweise mit. Tipp: Im Tab „Strecke“ kannst du Adressen Personen zuordnen, dann geht das automatisch.'));
 
   const dates = weekDates(monday).filter((d) => state.ui.showWeekend || weekdayIndex(d) < 5 || week?.days[d]);
   const today = toISODate(new Date());
   const dirs = state.roundTrip ? DIRECTIONS : ['hin'];
   el.append(h('div', { class: 'days' }, dates.map((date) => {
     const d = week?.days[date] || {};
-    const dayTotal = dirs.reduce((a, dir) => a + (d[dir] ? calcTrip(d[dir], snap, state.split).total : 0), 0);
+    const dayTotal = dirs.reduce((a, dir) => a + (d[dir] ? calcTrip(d[dir], snap, state.split, dir).total : 0), 0);
     return h('section', { class: `day ${date === today ? 'today' : ''}` },
       h('div', { class: 'day-head' }, h('strong', {}, fmtDate(date, { weekday: true, long: true })), dayTotal ? h('span', { class: 'muted' }, fmtEuro(dayTotal)) : null),
       h('div', { class: `day-trips cols-${dirs.length}` }, dirs.map((dir) => tripCell(monday, date, dir, d[dir], snap))),

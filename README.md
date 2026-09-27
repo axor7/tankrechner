@@ -11,6 +11,9 @@ Eine Website für Fahrgemeinschaften: Strecke mit Zwischenstopps planen, aktuell
 - Rückfahrt über dieselbe Strecke, Kilometer und Fahrzeit je Teilstrecke
 - Ohne Karte: Kilometer auch manuell eingebbar
 
+- **Adressen Personen zuordnen** (👤 unter jeder Adresse): Jeder zahlt auf dem Hinweg erst ab seiner Adresse und auf dem Rückweg nur bis dorthin. Fährt jemand an einem Tag nicht mit, wird seine Adresse ausgelassen und die Strecke für diese Fahrt neu berechnet.
+- **Reihenfolge der Rückfahrt** frei wählbar (wer wird zuerst abgesetzt?), eigene Rückroute orange gestrichelt auf der Karte
+
 **2 · Auto & Sprit**
 - Verbrauch (l/100 km) und Kraftstoff (E10, E5, Diesel, LPG, CNG), optional Zusatzkosten pro km (Verschleiß o. Ä.)
 - Live-Preise aller Tankstellen entlang der Route (Tankerkönig / Markttransparenzstelle), farbig auf der Karte
@@ -40,6 +43,9 @@ Der Fahrer ist immer dabei. Wer die Fahrt fährt, hat den Sprit bezahlt – dara
 
 Beispiel: Karlsruhe → Pforzheim (32 km) → Stuttgart (49 km). Ich und Anna ab Karlsruhe, Ben steigt in Pforzheim zu.
 Die erste Teilstrecke teilen sich 2 Personen, die zweite 3 – Ben zahlt nur ab Pforzheim.
+
+Sind Adressen Personen zugeordnet, ergeben sich die Teilstrecken automatisch aus den Adressen der Mitfahrenden des Tages
+(Hinweg: ab der eigenen Adresse, Rückweg: bis zur eigenen Adresse). Ohne Zuordnung werden die Teilstrecken im Wochenplan von Hand gepflegt.
 
 ## Starten
 

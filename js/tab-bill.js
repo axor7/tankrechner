@@ -1,7 +1,7 @@
 // Tab "Abrechnung": fair aufteilen, wer schuldet wem wie viel.
 import { state, update, personById } from './state.js';
-import { aggregate, settle, addDays, isoWeek, mondayOf, toISODate, DIRECTIONS, directedLegs, FUELS } from './calc.js';
-import { h, stat, fmtEuro, fmtKm, fmtL, fmtDate, fmtPrice, toast } from './ui.js';
+import { aggregate, settle, addDays, isoWeek, mondayOf, toISODate, DIRECTIONS, FUELS } from './calc.js';
+import { h, stat, fmtEuro, fmtKm, fmtL, fmtDate, fmtPrice, fmtDuration, toast } from './ui.js';
 
 function periodRange() {
   const ui = state.ui;
@@ -155,10 +155,9 @@ function detailsCard(agg) {
         h('div', { class: 'row between' },
           h('strong', {}, t.direction === 'hin' ? '➜ Hinfahrt' : '⟲ Rückfahrt'),
           h('span', { class: 'muted' }, `🚗 ${nameOf(t.trip.driver)} · ${fmtKm(t.result.km)} · ${fmtEuro(t.result.total)}`)),
-        h('ul', { class: 'leg-list' }, directedLegs(t.snap.legs, t.direction).map((leg) => {
-          const l = t.result.legs[leg.legIndex];
+        h('ul', { class: 'leg-list' }, t.result.legs.map((l) => {
           return h('li', {},
-            h('span', {}, `${leg.from} → ${leg.to}`),
+            h('span', {}, `${l.from} → ${l.to} `, h('small', { class: 'muted' }, `${t.result.estimated ? '≈ ' : ''}${fmtKm(l.km)}`)),
             h('span', { class: 'muted' }, `${fmtEuro(l.cost)} ÷ ${l.payers.length} = ${fmtEuro(l.per)} für ${l.payers.map(nameOf).join(', ')}`));
         })),
       )),
@@ -200,7 +199,7 @@ export function renderBillTab(el) {
         h('div', { class: 'share-name' }, h('span', { class: 'dot' }), p.name),
         h('div', { class: 'share-bar' }, h('div', { class: 'share-fill', style: { width: `${(x.share / maxShare) * 100}%` } })),
         h('div', { class: 'share-amount' }, fmtEuro(x.share)),
-        h('div', { class: 'share-meta muted' }, `${x.trips} Fahrten · ${fmtKm(x.km)}${x.paid ? ` · hat ${fmtEuro(x.paid)} ausgelegt (als Fahrer)` : ''}`),
+        h('div', { class: 'share-meta muted' }, `${x.trips} Fahrten · ${fmtKm(x.km)}${x.min ? ` · ${fmtDuration(x.min * 60)} im Auto` : ''}${x.paid ? ` · hat ${fmtEuro(x.paid)} ausgelegt (als Fahrer)` : ''}`),
       ))),
     ),
     h('section', { class: 'card' },

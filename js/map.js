@@ -62,7 +62,7 @@ export class MapView {
     });
   }
 
-  setRoute(route, alternatives = [], selected = 0) {
+  setRoute(route, alternatives = [], selected = 0, returnRoute = null) {
     this.routeLayer.clearLayers();
     this.route = route;
     if (!route) return;
@@ -81,6 +81,10 @@ export class MapView {
       this.h.onInsertVia(legIndexAt(route, e.latlng) + 1, e.latlng);
     });
     main.addTo(this.routeLayer);
+    if (returnRoute) { // Rückweg obendrauf, damit er auch auf gemeinsamen Straßen sichtbar ist
+      const back = L.polyline(returnRoute.coords, { color: '#ea580c', weight: 4, opacity: 0.95, dashArray: '10 10', interactive: false });
+      back.addTo(this.routeLayer);
+    }
   }
 
   setStations(stations, fuel, selectedId, onSelect) {

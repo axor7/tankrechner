@@ -1,5 +1,5 @@
 // Zustand der App + Speicherung im Browser (localStorage).
-import { mondayOf, toISODate } from './calc.js';
+import { mondayOf, toISODate, routeKey } from './calc.js';
 
 const KEY = 'tankrechner:v1';
 
@@ -19,7 +19,10 @@ export function defaultState() {
     ],
     roundTrip: true,
     manualKm: null,
+    returnOrder: null, // Stopp-IDs für die Rückfahrt (null = umgekehrt wie Hinweg)
     route: null,
+    returnRoute: null,
+    routeCache: {}, // berechnete Routen je Stoppfolge (für ausgelassene Adressen)
     alternatives: [],
     car: { consumption: 6.5, fuel: 'e10', extraPerKm: 0 },
     price: { mode: 'cheapest', manual: 1.75, current: null, stationId: null, stationName: '', updatedAt: null },
@@ -89,15 +92,44 @@ export function currentLegs(s = state) {
       from: stopName(stops[i], i, stops.length),
       to: stopName(stops[i + 1], i + 1, stops.length),
       km: Math.round(l.distance / 100) / 10,
+      min: l.duration / 60,
     }));
   }
   if (s.manualKm > 0) return [{ from: 'Start', to: 'Ziel', km: Number(s.manualKm) }];
   return [];
 }
 
+/** Reihenfolge der Stopps auf der Rückfahrt (IDs). Beginnt immer am Ziel des Hinwegs. */
+export function returnOrderIds(s = state) {
+  const ids = validStops(s).map((x) => x.id);
+  const reversed = [...ids].reverse();
+  const saved = (s.returnOrder || []).filter((id) => ids.includes(id));
+  if (saved.length !== ids.length || saved[0] !== reversed[0]) return reversed;
+  return saved;
+}
+
+export const isCustomReturn = (s = state) => returnOrderIds(s).join() !== validStops(s).map((x) => x.id).reverse().join();
+
+export function returnStops(s = state) {
+  const byId = new Map(validStops(s).map((x) => [x.id, x]));
+  return returnOrderIds(s).map((id) => byId.get(id));
+}
+
+const kmLegs = (route) => route.legs.map((l) => ({ km: Math.round(l.distance / 100) / 10, min: l.duration / 60 }));
+
 /** Momentaufnahme der Einstellungen – damit alte Wochen stabil abgerechnet bleiben. */
 export function makeSnapshot(s = state) {
+  const valid = validStops(s);
+  const stops = valid.map((x, i) => ({ id: x.id, name: stopName(x, i, valid.length), lat: x.lat, lng: x.lng, owners: [...(x.owners || [])] }));
+  const routes = {};
+  if (stops.length >= 2 && s.route?.legs.length === stops.length - 1) routes[routeKey(stops)] = kmLegs(s.route);
+  const back = returnStops(s);
+  if (back.length >= 2 && s.returnRoute?.legs.length === back.length - 1) routes[routeKey(back)] = kmLegs(s.returnRoute);
+  else if (!isCustomReturn(s) && routes[routeKey(stops)]) routes[routeKey(back)] = [...routes[routeKey(stops)]].reverse(); // wie bisher: Rückweg = Hinweg umgekehrt
   return {
+    stops,
+    returnOrder: returnOrderIds(s),
+    routes,
     legs: currentLegs(s),
     consumption: Number(s.car.consumption) || 0,
     price: effectivePrice(s),
