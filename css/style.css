@@ -439,14 +439,29 @@ details.more > * + * { margin-top: .5rem; }
 .dots .dot { width: .6rem; height: .6rem; }
 
 /* PayPal & WhatsApp */
-.pay-grid { display: grid; grid-template-columns: auto 1fr 1fr; gap: .35rem .5rem; align-items: start; }
+.pay-grid { display: grid; grid-template-columns: auto 1fr; gap: .35rem .5rem; align-items: start; }
 .pay-grid input { padding: .4rem .55rem; font-size: .88rem; }
 .pay-grid small { display: block; font-size: .72rem; margin-top: .1rem; overflow-wrap: anywhere; }
 .pay-name { display: flex; align-items: center; gap: .35rem; font-size: .88rem; font-weight: 600; padding-top: .45rem; }
 .transfers li { flex-wrap: wrap; }
 .pay-actions { display: flex; gap: .35rem; flex-wrap: wrap; width: 100%; }
-.btn-wa { background: #25d366; color: #06301a; border-color: transparent; }
-.btn-wa:hover:not(:disabled) { background: #1ebe5b; }
 .btn-pp { background: #ffc439; color: #111; border-color: transparent; }
-@media (max-width: 480px) { .pay-grid { grid-template-columns: 1fr 1fr; } .pay-name { grid-column: 1 / -1; padding-top: .3rem; } .pay-grid > .muted:first-child { display: none; } }
 a.btn { text-decoration: none; display: inline-flex; align-items: center; }
+
+/* Offene Beträge */
+.debt { border: 1px solid var(--border); border-radius: 12px; padding: .6rem .7rem; display: flex; flex-direction: column; gap: .45rem; }
+.debt + .debt { margin-top: .5rem; }
+.debt-head { display: flex; align-items: center; gap: .45rem; }
+.debt-head strong:last-child { margin-left: auto; font-size: 1.05rem; }
+.debt-weeks { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .2rem; }
+.debt-weeks label { display: flex; align-items: center; gap: .5rem; background: var(--surface-2); border-radius: 8px; padding: .4rem .55rem; cursor: pointer; font-size: .88rem; }
+.debt-weeks input { width: 1.05rem; height: 1.05rem; accent-color: var(--primary); flex: none; }
+.debt-weeks .w-label { flex: 1; min-width: 0; }
+.debt-weeks small { display: block; color: var(--muted); font-size: .75rem; }
+.paid-list { list-style: none; margin: .4rem 0 0; padding: 0; display: flex; flex-direction: column; gap: .25rem; font-size: .85rem; }
+.paid-list li { display: flex; align-items: center; gap: .4rem; }
+.paid-list li span:first-child { flex: 1; }
+.badge-paid { font-size: .72rem; font-weight: 700; color: var(--good); background: var(--good-soft); border-radius: 999px; padding: .1rem .5rem; }
+.btn-paid { background: var(--good-soft); color: var(--good); border-color: color-mix(in srgb, var(--good) 40%, transparent); }
+.transfers li.is-paid { opacity: .75; }
+.transfers li.is-paid strong { text-decoration: line-through; }

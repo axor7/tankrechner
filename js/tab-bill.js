@@ -1,7 +1,8 @@
 // Tab "Abrechnung": fair aufteilen, wer schuldet wem wie viel.
 import { state, update, personById } from './state.js';
 import { aggregate, settle, addDays, isoWeek, mondayOf, toISODate, DIRECTIONS, FUELS } from './calc.js';
-import { paymentMessage, paypalLink, paypalUser, waLink, waPhone } from './pay.js';
+import { paymentMessage, paypalLink, paypalUser } from './pay.js';
+import { weeklyDebts, withPayments, openByPair, markPaid, payKey } from './debts.js';
 import { payUi } from './tab-trips.js';
 import { h, stat, fmtEuro, fmtKm, fmtL, fmtDate, fmtPrice, fmtDuration, toast } from './ui.js';
 
@@ -131,41 +132,113 @@ const copy = async (text, msg) => {
   try { await navigator.clipboard.writeText(text); toast(msg, 'ok'); } catch { prompt('Kopieren:', text); }
 };
 
-/** Eine Ausgleichszahlung mit WhatsApp- und PayPal-Knöpfen. */
+const weekLabel = (monday) => `KW ${isoWeek(monday).week} (${fmtDate(monday)} – ${fmtDate(addDays(monday, 6))})`;
+
+function goToPaypalSettings() {
+  payUi.open = true;
+  update((s) => { s.ui.tab = 'trips'; });
+  setTimeout(() => document.getElementById('pay-settings')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
+}
+
+/** Nachricht + PayPal-Link-Knöpfe für eine Zahlung (eine oder mehrere Wochen). */
+function payButtons(fromId, toId, items) {
+  const pp = paypalUser(personById(toId)?.paypal);
+  const total = Math.round(items.reduce((a, x) => a + x.amount, 0) * 100) / 100;
+  const message = paymentMessage({ fromName: nameOf(fromId), toName: nameOf(toId), items, paypal: pp });
+  return [
+    h('button', { type: 'button', class: 'btn btn-small btn-primary', disabled: !items.length, onclick: () => copy(message, 'Nachricht kopiert – jetzt z. B. in WhatsApp einfügen') }, '📋 Nachricht kopieren'),
+    pp
+      ? h('button', { type: 'button', class: 'btn btn-small btn-pp', disabled: !items.length, onclick: () => copy(paypalLink(pp, total), 'PayPal-Link kopiert') }, '🅿️ PayPal-Link kopieren')
+      : h('button', { type: 'button', class: 'link', onclick: goToPaypalSettings }, `PayPal von ${nameOf(toId)} hinterlegen`),
+  ];
+}
+
+/** Eine Ausgleichszahlung im gewählten Zeitraum. Bei Wochenansicht mit Abhaken. */
 function transferRow(t, range, agg) {
   const from = personById(t.from);
   const to = personById(t.to);
   const x = agg.persons[t.from];
-  const pp = paypalUser(to?.paypal);
-  const message = paymentMessage({
-    fromName: nameOf(t.from),
-    toName: nameOf(t.to),
-    amount: t.amount,
-    period: range.label === 'Alle Fahrten' ? 'insgesamt' : `für ${range.label}`,
-    details: x ? `${x.trips} Fahrten, ${fmtKm(x.km)}` : '',
-    paypal: pp,
-  });
-  return h('li', {},
+  const week = state.ui.period === 'week' ? state.ui.week : null;
+  const key = week && payKey(week, t.from, t.to);
+  const paid = key && state.payments[key];
+  return h('li', { class: paid ? 'is-paid' : '' },
     h('span', { class: 'who', style: { color: from?.color } }, nameOf(t.from)),
     h('span', { class: 'arrow' }, '→'),
     h('span', { class: 'who', style: { color: to?.color } }, nameOf(t.to)),
+    paid ? h('span', { class: 'badge-paid' }, '✓ bezahlt') : null,
     h('strong', {}, fmtEuro(t.amount)),
     h('div', { class: 'pay-actions' },
-      h('a', {
-        class: 'btn btn-small btn-wa', href: waLink(from?.phone, message), target: '_blank', rel: 'noopener',
-        title: waPhone(from?.phone) ? `Nachricht direkt an ${nameOf(t.from)}` : 'WhatsApp öffnen und Kontakt auswählen',
-      }, `💬 WhatsApp an ${nameOf(t.from)}`),
-      pp ? h('button', { type: 'button', class: 'btn btn-small btn-pp', onclick: () => copy(paypalLink(pp, t.amount), 'PayPal-Link kopiert') }, '🅿️ PayPal-Link kopieren') : null,
-      h('button', { type: 'button', class: 'btn btn-small btn-ghost', onclick: () => copy(message, 'Nachricht kopiert') }, '📋 Nachricht'),
-      !pp ? h('button', {
-        type: 'button', class: 'link',
-        onclick: () => {
-          payUi.open = true;
-          update((s) => { s.ui.tab = 'trips'; });
-          setTimeout(() => document.getElementById('pay-settings')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
-        },
-      }, `PayPal von ${nameOf(t.to)} hinterlegen`) : null,
+      paid ? null : payButtons(t.from, t.to, [{ label: range.label === 'Alle Fahrten' ? 'alle Fahrten' : range.label, amount: t.amount, details: x ? `${x.trips} Fahrten, ${fmtKm(x.km)}` : '' }]),
+      key ? h('button', {
+        type: 'button', class: `btn btn-small ${paid ? 'btn-ghost' : 'btn-paid'}`,
+        onclick: () => update((s) => {
+          if (paid) delete s.payments[key];
+          else s.payments[key] = { amount: t.amount, at: Date.now() };
+        }),
+      }, paid ? '↺ Doch nicht bezahlt' : '✓ Bezahlt') : null,
     ),
+  );
+}
+
+// ---------- Offene Beträge über alle Wochen ----------
+
+const deselected = new Set(); // abgewählte Wochen (Standard: alle offenen ausgewählt)
+
+function openCard() {
+  const items = withPayments(weeklyDebts(state.weeks, state.split, state.roundTrip), state.payments);
+  if (!items.length) return null;
+  const pairs = openByPair(items);
+  const paidItems = items.filter((d) => d.open <= 0).sort((a, b) => b.week.localeCompare(a.week));
+
+  return h('section', { class: 'card' },
+    h('h2', {}, '💰 Offene Beträge'),
+    pairs.length
+      ? h('p', { class: 'hint small' }, 'Alle Wochen, die noch nicht als bezahlt abgehakt sind. Wähle aus, welche Wochen in die Nachricht sollen – z. B. wenn jemand eine Woche vergessen hat.')
+      : h('p', {}, 'Alles bezahlt 🎉'),
+    pairs.map((pair) => {
+      const selected = pair.items.filter((d) => !deselected.has(d.key));
+      const selTotal = Math.round(selected.reduce((a, d) => a + d.open, 0) * 100) / 100;
+      const msgItems = selected.map((d) => ({
+        label: weekLabel(d.week),
+        amount: d.open,
+        details: d.paid > 0 ? `Rest, ${fmtEuro(d.paid)} schon bezahlt` : `${d.trips} Fahrten, ${fmtKm(d.km)}`,
+      }));
+      return h('div', { class: 'debt' },
+        h('div', { class: 'debt-head' },
+          h('span', { class: 'who', style: { color: personById(pair.from)?.color } }, nameOf(pair.from)),
+          h('span', { class: 'arrow muted' }, '→'),
+          h('span', { class: 'who', style: { color: personById(pair.to)?.color } }, nameOf(pair.to)),
+          h('strong', {}, fmtEuro(pair.total))),
+        h('ul', { class: 'debt-weeks' }, pair.items.map((d) => h('li', {}, h('label', {},
+          h('input', {
+            type: 'checkbox', checked: !deselected.has(d.key),
+            onchange: (e) => { if (e.target.checked) deselected.delete(d.key); else deselected.add(d.key); update(() => {}); },
+          }),
+          h('span', { class: 'w-label' }, weekLabel(d.week),
+            h('small', {}, d.paid > 0 ? `${fmtEuro(d.paid)} schon bezahlt – Woche hat sich danach geändert` : `${d.trips} Fahrten · ${fmtKm(d.km)}`)),
+          h('strong', {}, fmtEuro(d.open)))))),
+        h('div', { class: 'muted small' }, `Ausgewählt: ${selected.length} ${selected.length === 1 ? 'Woche' : 'Wochen'} · ${fmtEuro(selTotal)}`),
+        h('div', { class: 'pay-actions' },
+          payButtons(pair.from, pair.to, msgItems),
+          h('button', {
+            type: 'button', class: 'btn btn-small btn-paid', disabled: !selected.length,
+            onclick: () => {
+              for (const d of pair.items) deselected.delete(d.key); // übrige offene Wochen wieder auswählen
+              update((s) => { s.payments = markPaid(s.payments, selected); });
+              toast(`${nameOf(pair.from)}: ${fmtEuro(selTotal)} als bezahlt abgehakt`, 'ok');
+            },
+          }, '✓ Als bezahlt abhaken'),
+        ),
+      );
+    }),
+    paidItems.length ? h('details', { class: 'more' },
+      h('summary', {}, `Bereits bezahlt (${paidItems.length})`),
+      h('ul', { class: 'paid-list' }, paidItems.map((d) => h('li', {},
+        h('span', {}, `${nameOf(d.from)} → ${nameOf(d.to)} · ${weekLabel(d.week)}`),
+        h('span', { class: 'muted' }, `${fmtEuro(d.paid)}${d.paidAt ? ` am ${new Date(d.paidAt).toLocaleDateString('de-DE')}` : ''}`),
+        h('button', { type: 'button', class: 'link', onclick: () => update((s) => { delete s.payments[d.key]; }) }, 'rückgängig'),
+      ))),
+    ) : null,
   );
 }
 
@@ -215,6 +288,8 @@ function detailsCard(agg) {
 export function renderBillTab(el) {
   const range = periodRange();
   const entries = collectEntries(range.from, range.to);
+  const open = openCard();
+  if (open) el.append(open);
   el.append(periodCard(range));
 
   if (!entries.length) {
@@ -254,7 +329,9 @@ export function renderBillTab(el) {
       transfers.length
         ? h('ul', { class: 'transfers' }, transfers.map((t) => transferRow(t, range, agg)))
         : h('p', {}, 'Alles ausgeglichen 🎉'),
-      h('p', { class: 'hint small' }, 'Annahme: Wer fährt, bezahlt auch den Sprit für diese Fahrt. Wechselt ihr euch ab, wird hier automatisch verrechnet.'),
+      h('p', { class: 'hint small' }, state.ui.period === 'week'
+        ? 'Annahme: Wer fährt, bezahlt auch den Sprit für diese Fahrt. Wechselt ihr euch ab, wird hier automatisch verrechnet.'
+        : 'Annahme: Wer fährt, bezahlt auch den Sprit. Abhaken, was bezahlt ist, geht wochenweise – oben unter „Offene Beträge“ oder in der Wochenansicht.'),
       h('div', { class: 'row gap wrap' },
         h('button', {
           type: 'button', class: 'btn btn-primary',

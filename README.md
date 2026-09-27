@@ -34,7 +34,8 @@ Eine Website für Fahrgemeinschaften: Strecke mit Zwischenstopps planen, aktuell
 - Ausgleich: wer wem wie viel überweist (möglichst wenige Überweisungen)
 - Regeln: *nach Teilstrecken* (jede Teilstrecke wird nur unter den dort Mitfahrenden geteilt) oder *gleich pro Fahrt*; Fahrer zahlt mit oder nicht
 - Als Text kopieren (z. B. für WhatsApp), teilen, drucken; Detailansicht jeder Fahrt
-- **Bezahlen per PayPal & WhatsApp**: PayPal.me-Namen (und optional Handynummern) bei den Mitfahrern hinterlegen – pro Ausgleichszahlung öffnet ein Knopf WhatsApp mit fertiger Nachricht inkl. Betrag und PayPal-Link (`paypal.me/name/12.34EUR`). „Freunde & Familie“ wird in der Nachricht genannt; auswählen muss es der Zahlende in PayPal selbst.
+- **Bezahlen per PayPal**: PayPal.me-Namen bei den Mitfahrern hinterlegen – pro Zahlung gibt es eine fertige Nachricht (Betrag, Fahrten, km, PayPal-Link `paypal.me/name/12.34EUR`) und den PayPal-Link einzeln zum Kopieren. „Freunde & Familie“ wird in der Nachricht genannt; auswählen muss es der Zahlende in PayPal selbst.
+- **Offene Beträge**: alle noch nicht bezahlten Wochen pro Person; mehrere Wochen auswählen (z. B. wenn jemand eine Woche vergessen hat) → eine Nachricht mit Liste und Gesamtbetrag. Bezahltes abhaken (auch rückgängig); ändert sich eine Woche nachträglich, bleibt nur die Differenz offen.
 
 ## So wird fair gerechnet
 
@@ -97,6 +98,7 @@ js/state.js         Zustand & Speicherung
 js/tab-*.js         Die Tabs „Auto & Sprit“, „Fahrten“, „Abrechnung“
 js/example.js       Beispieldaten
 js/version.js       Versionsanzeige & Hinweis auf neue Version
-js/pay.js           PayPal.me- und WhatsApp-Links
+js/pay.js           PayPal.me-Links und Nachrichtentexte
+js/debts.js         Offene Beträge je Woche, bezahlt abhaken
 tests/              Tests (node --test)
 ```

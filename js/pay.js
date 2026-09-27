@@ -1,4 +1,4 @@
-// Bezahl-Links: PayPal.me (Betrag vorausgefüllt) und WhatsApp (Nachricht vorausgefüllt).
+// Bezahl-Links (PayPal.me mit vorausgefülltem Betrag) und Nachrichtentexte.
 // Reine Funktionen ohne DOM – werden auch getestet.
 
 /** PayPal.me-Namen aus Eingabe holen: "name", "paypal.me/name", "https://www.paypal.com/paypalme/name/5" … */
@@ -18,34 +18,26 @@ export function paypalLink(user, amount) {
   return amount > 0 ? `https://paypal.me/${u}/${amount.toFixed(2)}EUR` : `https://paypal.me/${u}`;
 }
 
-/** Handynummer für wa.me: nur Ziffern, internationales Format (0151… → 49151…). */
-export function waPhone(input) {
-  let d = String(input || '').replace(/[^\d+]/g, '');
-  if (!d) return '';
-  if (d.startsWith('+')) d = d.slice(1);
-  else if (d.startsWith('00')) d = d.slice(2);
-  else if (d.startsWith('0')) d = `49${d.slice(1)}`;
-  d = d.replace(/\D/g, '');
-  return d.length >= 8 ? d : '';
-}
-
-/** WhatsApp-Link: mit Nummer direkt an die Person, sonst Kontaktauswahl. */
-export function waLink(phone, text) {
-  const p = waPhone(phone);
-  return `https://wa.me/${p}?text=${encodeURIComponent(text)}`;
-}
-
 const euro = (v) => new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR' }).format(v);
 
-/** Nachricht an eine Person, die Geld überweisen soll. */
-export function paymentMessage({ fromName, toName, amount, period, details, paypal }) {
-  const lines = [`Hi ${fromName} 👋`, `deine Tankkosten ${period}: *${euro(amount)}*${details ? ` (${details})` : ''}`];
-  const link = paypalLink(paypal, amount);
-  if (link) {
-    lines.push('', `Bitte per PayPal an ${toName} – als *„Freunde & Familie“* senden:`, link);
+/**
+ * Nachricht an eine Person, die Geld überweisen soll.
+ * items: [{ label, amount, details }] – eine oder mehrere Wochen.
+ */
+export function paymentMessage({ fromName, toName, items, paypal }) {
+  const total = Math.round(items.reduce((a, x) => a + x.amount, 0) * 100) / 100;
+  const lines = [`Hi ${fromName} 👋`];
+  if (items.length === 1) {
+    const [x] = items;
+    lines.push(`deine Tankkosten für ${x.label}: *${euro(x.amount)}*${x.details ? ` (${x.details})` : ''}`);
   } else {
-    lines.push('', `Bitte an ${toName} überweisen.`);
+    lines.push('deine offenen Tankkosten:');
+    for (const x of items) lines.push(`• ${x.label}: ${euro(x.amount)}${x.details ? ` (${x.details})` : ''}`);
+    lines.push(`*Gesamt: ${euro(total)}*`);
   }
+  const link = paypalLink(paypal, total);
+  if (link) lines.push('', `Bitte per PayPal an ${toName} – als *„Freunde & Familie“* senden:`, link);
+  else lines.push('', `Bitte an ${toName} überweisen.`);
   lines.push('', 'Danke! 🚗⛽');
   return lines.join('\n');
 }

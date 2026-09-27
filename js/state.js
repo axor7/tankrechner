@@ -31,6 +31,7 @@ export function defaultState() {
     observations: [],
     split: { mode: 'segment', driverPays: true, includeExtra: true },
     weeks: {},
+    payments: {}, // bezahlte Ausgleichszahlungen: { 'Woche|von|an': { amount, at } }
     ui: { tab: 'route', week: mondayOf(toISODate(new Date())), showWeekend: false, period: 'week', from: '', to: '' },
   };
 }
