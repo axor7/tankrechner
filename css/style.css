@@ -619,7 +619,11 @@ details.more > * + * { margin-top: .6rem; }
 .cal-week { display: grid; gap: .35rem; align-items: stretch; }
 .cal-week.days-5 { grid-template-columns: 2.6rem repeat(5, 1fr); }
 .cal-week.days-7 { grid-template-columns: 2.6rem repeat(7, 1fr); }
-.cal-kw { font-size: .68rem; color: var(--muted); font-weight: 600; display: grid; place-items: center; text-align: center; line-height: 1.1; }
+.cal-kw { font: inherit; font-size: .68rem; color: var(--primary); font-weight: 600; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; line-height: 1.1; background: var(--primary-soft); border: 0; border-radius: 8px; padding: .2rem 0; cursor: pointer; }
+.cal-kw:hover { filter: brightness(.95); }
+.week-row { flex-direction: column; align-items: stretch; gap: .45rem; }
+.week-row .segmented { width: 100%; }
+.week-row .segmented button { flex: 1; }
 .cal-day {
   position: relative; border: 0; border-radius: 12px; background: var(--fill); cursor: pointer; font: inherit; color: var(--text);
   display: flex; flex-direction: column; align-items: stretch; gap: .25rem; padding: .35rem .3rem .4rem; min-height: 4.4rem; text-align: left;
@@ -675,3 +679,9 @@ details.more > * + * { margin-top: .6rem; }
 /* Protokoll */
 .log-row .title { font-size: .9rem; }
 .plan-chips .chip:not(.active) { text-decoration: none; }
+
+/* Prognose */
+.fc-row { flex-direction: column; align-items: stretch; gap: .3rem; }
+.fc-people { display: flex; flex-wrap: wrap; gap: .3rem .8rem; font-size: .82rem; }
+.fc-person { display: inline-flex; align-items: center; gap: .3rem; }
+.fc-person .dot { background: var(--pc); }

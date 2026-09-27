@@ -7,7 +7,7 @@ import { rulesCard } from './view-costs.js';
 import { planEditor } from './view-trips.js';
 import { addressInput } from './address.js';
 import { inGroup, isAdmin, isLoggedIn, groupName, claims, claimPerson, members, myUserId, setRole, removeMember, loadLog, inviteLink, renewInvite } from './account.js';
-import { me, setAddress, setPaypal, setMyName, addPerson, removePerson, setPersonField, adminSet } from './actions.js';
+import { me, setAddress, setPaypal, setMyName, addPerson, removePerson, setPersonField, adminSet, setDefaultDriver } from './actions.js';
 import { h, toast } from './ui.js';
 import { icon } from './icons.js';
 
@@ -96,12 +96,6 @@ function personDetails(p) {
     h('div', { class: 'person-fields' },
       h('input', { type: 'color', value: p.color, 'aria-label': 'Farbe', onchange: (e) => safe(() => setPersonField(p.id, 'color', e.target.value)) }),
       h('input', { type: 'text', value: p.name, 'aria-label': 'Name', onchange: (e) => safe(() => setPersonField(p.id, 'name', e.target.value.trim() || p.name, `Name geändert: ${p.name} → ${e.target.value.trim()}`)) })),
-    h('label', { class: 'switch-row' },
-      h('span', {}, h('span', { class: 'title' }, 'Aktiv'), h('span', { class: 'sub muted small' }, isActive(p) ? 'Fährt nach Regelplan mit' : 'Pausiert – fährt nicht mit, bleibt in alten Abrechnungen')),
-      h('input', {
-        type: 'checkbox', class: 'switch', checked: isActive(p),
-        onchange: (e) => safe(() => { setPersonField(p.id, 'active', e.target.checked, `${p.name} ${e.target.checked ? 'aktiviert' : 'pausiert (inaktiv)'}`); if (!e.target.checked) toast(`${p.name} pausiert – zu finden unter „Pausiert“`); }),
-      })),
     h('div', { class: 'field' }, p.id === state.defaultDriver ? 'Startadresse' : 'Abholadresse',
       addressInput({ value: p.address, onSelect: (a) => safe(() => setAddress(p.id, a)) })),
     h('div', { class: 'field' }, 'Regelplan', planEditor({ pid: p.id })),
@@ -109,8 +103,8 @@ function personDetails(p) {
       claim ? h('span', { class: 'muted small' }, `Konto: ${claim.name}`) : h('span', { class: 'muted small' }, 'Ohne Konto – du pflegst die Tage'),
       h('button', {
         type: 'button', class: 'btn btn-small btn-danger', style: { marginLeft: 'auto' }, disabled: p.id === state.defaultDriver,
-        onclick: () => { if (confirm(`${p.name} wirklich löschen? Tipp: Wer nur Pause macht, einfach auf „inaktiv“ stellen.`)) safe(() => { removePerson(p.id); settingsUi.openPerson = null; }); },
-      }, icon('trash-2', { size: 15 }), 'Löschen')),
+        onclick: () => { if (confirm(`${p.name} entfernen? Vergangene Fahrten bleiben in der Abrechnung erhalten, ab heute fährt ${p.name} nicht mehr mit.\n\nTipp: Wer nur Pause macht, braucht nicht entfernt zu werden – einfach die Woche im Kalender auf „gar nicht“ stellen oder den Regelplan leeren.`)) safe(() => { removePerson(p.id); settingsUi.openPerson = null; }); },
+      }, icon('trash-2', { size: 15 }), 'Entfernen')),
   );
 }
 
@@ -119,7 +113,7 @@ function personRow(p) {
   const claim = claims().get(p.id);
   return [
     h('button', {
-      type: 'button', id: `person-${p.id}`, class: `list-row person-row ${isActive(p) ? '' : 'inactive'}`, 'aria-expanded': String(open), style: { '--pc': p.color },
+      type: 'button', id: `person-${p.id}`, class: 'list-row person-row', 'aria-expanded': String(open), style: { '--pc': p.color },
       onclick: () => { settingsUi.openPerson = open ? null : p.id; update(() => {}); },
     },
       h('span', { class: 'dot-lg' }, initials(p.name)),
@@ -134,9 +128,7 @@ function personRow(p) {
 
 function personsSection() {
   let newName = '';
-  const all = persons();
-  const active = all.filter(isActive);
-  const inactive = all.filter((p) => !isActive(p));
+  const active = persons().filter(isActive); // entfernte (archivierte) Personen ausblenden
   return section(`Mitfahrer (${active.length})`, [
     h('div', { class: 'list' },
       active.map(personRow),
@@ -144,17 +136,13 @@ function personsSection() {
         h('span', { class: 'sq sq-green' }, icon('user-plus', { size: 16 })),
         h('input', { type: 'text', placeholder: 'Mitfahrer ohne App hinzufügen', 'data-focus-key': 'new-person', oninput: (e) => { newName = e.target.value; } }),
         h('button', { type: 'submit', class: 'btn btn-small' }, 'Hinzufügen'))),
-    inactive.length ? h('div', { class: 'list', style: { marginTop: '.5rem' } },
-      h('button', { type: 'button', class: 'list-row', onclick: () => { settingsUi.showInactive = !settingsUi.showInactive; update(() => {}); } },
-        h('span', { class: 'grow muted' }, `Pausiert (${inactive.length})`), h('span', { class: 'chev' }, icon(settingsUi.showInactive ? 'chevron-down' : 'chevron-right', { size: 18 }))),
-      settingsUi.showInactive ? inactive.map(personRow) : null) : null,
     h('div', { class: 'list', style: { marginTop: '.5rem' } },
       h('label', { class: 'list-row has-sq' },
         h('span', { class: 'sq sq-blue' }, icon('car', { size: 16 })),
         h('span', { class: 'grow' }, 'Fahrer (Auto)'),
-        h('select', { style: { width: 'auto' }, onchange: (e) => safe(() => adminSet((s) => { s.defaultDriver = e.target.value; }, `Fahrer ist jetzt ${personById(e.target.value)?.name}`)) },
-          all.filter((p) => isActive(p) || p.id === state.defaultDriver).map((p) => h('option', { value: p.id, selected: p.id === state.defaultDriver }, p.name))))),
-  ], 'Mitfahrer mit Konto pflegen Adresse und Tage selbst. Wer Pause macht, auf „inaktiv“ stellen statt löschen.');
+        h('select', { style: { width: 'auto' }, onchange: (e) => safe(() => setDefaultDriver(e.target.value)) },
+          active.map((p) => h('option', { value: p.id, selected: p.id === state.defaultDriver }, p.name))))),
+  ], 'Mitfahrer mit Konto pflegen Adresse und Tage selbst. Wer mal eine Woche nicht mitfährt: im Kalender auf die KW tippen. Ein Fahrerwechsel gilt ab heute.');
 }
 
 // ---------- Admin: Mitglieder & Rechte ----------

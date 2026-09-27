@@ -22,7 +22,7 @@ const ALL_VIEWS = [
   { id: 'home', label: 'Übersicht', icon: 'house', color: 'blue' },
   { id: 'trips', label: 'Fahrten', icon: 'calendar-days', color: 'green' },
   { id: 'costs', label: 'Kosten', icon: 'wallet', color: 'orange' },
-  { id: 'route', label: 'Strecke', icon: 'route', color: 'indigo', admin: true },
+  { id: 'route', label: 'Strecke', icon: 'route', color: 'indigo' },
   { id: 'settings', label: 'Einstellungen', icon: 'settings', color: 'gray' },
 ];
 const views = () => ALL_VIEWS.filter((v) => !v.admin || isAdmin());
@@ -40,14 +40,16 @@ function fullStops() {
   if (!driver?.address?.lat || !state.destination?.lat) return [];
   const byId = new Map(persons.map((p) => [p.id, p]));
   const order = effectiveOrder(state, persons.filter(isActive));
-  const stops = [{ id: `p:${driver.id}`, label: `${driver.name} (Start)`, lat: driver.address.lat, lng: driver.address.lng, color: driver.color, pids: [driver.id] }];
+  const admin = isAdmin();
+  const mine = me();
+  const stops = [{ id: `p:${driver.id}`, label: `${driver.name} (Start)`, lat: driver.address.lat, lng: driver.address.lng, color: driver.color, pids: [driver.id], draggable: admin || driver.id === mine }];
   for (const pid of order) {
     const p = byId.get(pid);
     const same = stops.find((s) => Math.abs(s.lat - p.address.lat) < 1e-5 && Math.abs(s.lng - p.address.lng) < 1e-5);
-    if (same) { same.pids.push(pid); same.label += `, ${p.name}`; continue; }
-    stops.push({ id: `p:${pid}`, label: p.name, lat: p.address.lat, lng: p.address.lng, color: p.color, pids: [pid] });
+    if (same) { same.pids.push(pid); same.label += `, ${p.name}`; same.draggable = admin; continue; }
+    stops.push({ id: `p:${pid}`, label: p.name, lat: p.address.lat, lng: p.address.lng, color: p.color, pids: [pid], draggable: admin || pid === mine });
   }
-  stops.push({ id: 'dest', label: state.destination.label?.split(',')[0] || 'Ziel', lat: state.destination.lat, lng: state.destination.lng });
+  stops.push({ id: 'dest', label: state.destination.label?.split(',')[0] || 'Ziel', lat: state.destination.lat, lng: state.destination.lng, draggable: admin });
   return stops;
 }
 
@@ -64,12 +66,19 @@ const refreshRoute = debounce(async (force = false) => {
   document.body.classList.add('loading-route');
   try {
     const pickups = persons.filter((p) => p.id !== driver.id && p.address?.lat != null);
-    const optKey = [driver.address, ...pickups.map((p) => p.address), state.destination].map((a) => `${a.lat.toFixed(5)},${a.lng.toFixed(5)}`).join(';') + pickups.map((p) => p.id).join();
-    if (!state.order?.length && pickups.length > 1 && (force || state.optimizedFor !== optKey)) {
+    const pos = (a) => `${a.lat.toFixed(5)},${a.lng.toFixed(5)}`;
+    const tokens = [`start@${pos(driver.address)}`, `ziel@${pos(state.destination)}`, ...pickups.map((p) => `${p.id}@${pos(p.address)}`)];
+    const optKey = tokens.join(';');
+    // Nur jemand entfernt? Dann bleibt die bisherige Reihenfolge (sonst änderte sich die laufende Woche rückwirkend).
+    const onlyRemoved = state.optimizedFor && tokens.every((t) => state.optimizedFor.split(';').includes(t));
+    if (!state.order?.length && pickups.length > 1 && (force || (state.optimizedFor !== optKey && !onlyRemoved))) {
       const idx = await optimizeOrder([driver.address, ...pickups.map((p) => p.address), state.destination]);
       const order = idx.map((i) => pickups[i].id);
-      adminSet((s) => { s.optimizedOrder = order; s.optimizedFor = optKey; }, `Beste Abholreihenfolge berechnet: ${order.map((id) => personById(id)?.name).join(' → ')}`);
-    }
+      // Entfernte behalten ihren alten Platz (für bereits gefahrene Tage dieser Woche)
+      const old = state.optimizedOrder || [];
+      for (const [k, id] of old.entries()) if (personById(id)?.archived && !order.includes(id)) order.splice(Math.min(k, order.length), 0, id);
+      adminSet((s) => { s.optimizedOrder = order; s.optimizedFor = optKey; }, `Beste Abholreihenfolge berechnet: ${order.filter((id) => !personById(id)?.archived).map((id) => personById(id)?.name).join(' → ')}`);
+    } else if (onlyRemoved && state.optimizedFor !== optKey) update((s) => { s.optimizedFor = optKey; });
     const stops = fullStops();
     const key = coordsKey(stops);
     if (force || state.route?.key !== key) {
@@ -125,11 +134,12 @@ const ensureRoutes = debounce(async () => {
 // ---------- Karte ----------
 
 const mapHandlers = {
-  menuItems: [['start', 'Start (Fahrer)'], ['end', 'Ziel']],
+  menuItems: () => (isAdmin() ? [['start', 'Start (Fahrer)'], ['end', 'Ziel']] : me() ? [['me', 'Meine Abholadresse']] : []),
   async onAddPoint(kind, latlng) {
     const label = await reverseGeocode(latlng.lat, latlng.lng);
     const addr = { label, lat: latlng.lat, lng: latlng.lng };
-    if (kind === 'end') setDestination(addr);
+    if (kind === 'me') safe(() => setAddress(me(), addr));
+    else if (kind === 'end') setDestination(addr);
     else safe(() => setAddress(state.defaultDriver, addr));
   },
   async onStopMoved(id, latlng) {
@@ -148,10 +158,13 @@ function setDestination(addr) {
 
 let mapKeys = {};
 function syncMap() {
-  if (!isAdmin()) return;
   const stops = fullStops();
-  const sk = JSON.stringify(stops.map((s) => [s.id, s.lat, s.lng, s.label]));
-  if (sk !== mapKeys.stops) { map.setStops(stops); mapKeys.stops = sk; }
+  const sk = JSON.stringify(stops.map((s) => [s.id, s.lat, s.lng, s.label, s.draggable]));
+  if (sk !== mapKeys.stops) {
+    map.setStops(stops);
+    if (!mapKeys.fitted && stops.length) { setTimeout(() => map.fit(stops, state.route), 80); mapKeys.fitted = true; } // erstes Mal: auf die Strecke zoomen
+    mapKeys.stops = sk;
+  }
   const rk = [state.route?.key, state.route?.distance].join('|');
   if (rk !== mapKeys.route) {
     if (state.route && mapKeys.route !== undefined) map.fit(stops, state.route);
@@ -253,7 +266,39 @@ function routeView(el) {
   ));
 }
 
+/** Strecke für Mitfahrer: nur ansehen, eigene Abholadresse ändern. */
+function memberRouteView(el) {
+  const persons = model().persons;
+  const driver = personById(state.defaultDriver);
+  const mine = me();
+  const pickups = effectiveOrder(state, persons.filter(isActive));
+  const my = personById(mine);
+  el.append(
+    h('section', { class: 'card' },
+      h('div', { class: 'list' },
+        h('div', { class: 'list-row' }, h('span', { class: 'dot', style: { '--pc': driver?.color } }),
+          h('span', { class: 'grow' }, h('strong', {}, 'Start'), h('small', { class: 'muted' }, ` · ${driver?.name || 'Fahrer'}`))),
+        pickups.map((pid, k) => {
+          const p = personById(pid);
+          return h('div', { class: 'list-row' }, h('span', { class: 'dot', style: { '--pc': p?.color } }),
+            h('span', { class: 'grow' }, `${k + 1}. ${p?.name}`, pid === mine ? h('span', { class: 'muted' }, ' (du)') : null));
+        }),
+        h('div', { class: 'list-row' }, icon('map-pin', { size: 16 }),
+          h('span', { class: 'grow' }, h('strong', {}, 'Ziel'), h('small', { class: 'muted' }, ` · ${state.destination?.label?.split(',').slice(0, 2).join(',') || 'noch nicht festgelegt'}`)))),
+      state.route?.distance ? h('div', { class: 'stats', style: { marginTop: '.75rem' } },
+        stat('Strecke (alle abholen)', fmtKm(state.route.distance / 1000)),
+        stat('Fahrzeit', fmtDuration(state.route.duration))) : null,
+      h('p', { class: 'hint small' }, 'Die Abholreihenfolge legt der Admin fest. Fährt jemand an einem Tag nicht mit, wird seine Adresse ausgelassen.')),
+    my ? h('section', { class: 'card' },
+      h('h2', {}, my.id === state.defaultDriver ? 'Deine Startadresse' : 'Deine Abholadresse'),
+      addressInput({ value: my.address, placeholder: 'Adresse suchen', allowLocate: true, near: state.destination, onSelect: (a) => safe(() => setAddress(mine, a)), focusKey: 'my-addr' }),
+      h('p', { class: 'hint small' }, 'Du kannst deine Adresse auch auf der Karte verschieben oder in die Karte tippen.')) : null,
+  );
+  if (!state.ui.showMap) el.append(h('button', { type: 'button', class: 'btn', onclick: toggleMap }, icon('map', { size: 18 }), 'Karte einblenden'));
+}
+
 function renderRouteView(el) {
+  if (!isAdmin()) return memberRouteView(el);
   const sub = state.ui.routeSub === 'fuel' ? 'fuel' : 'route';
   el.append(h('div', { class: 'segmented' },
     h('button', { type: 'button', class: sub === 'route' ? 'active' : '', onclick: () => update((s) => { s.ui.routeSub = 'route'; }) }, 'Route'),
@@ -269,6 +314,7 @@ function go(view) {
   update((s) => { s.ui.tab = view; });
   window.scrollTo({ top: 0 });
   map.invalidate();
+  if (view === 'route') setTimeout(() => map.fit(fullStops(), state.route), 120); // Karte wird auf dem Handy erst hier sichtbar
 }
 
 function renderNav() {
@@ -287,7 +333,6 @@ function renderNav() {
   }, icon(v.icon, { size: 24 }), h('span', {}, v.label === 'Einstellungen' ? 'Mehr' : v.label),
   v.id === 'costs' && badge ? h('span', { class: 'badge' }, String(badge)) : null)));
   const mapBtn = $('#btn-map');
-  mapBtn.hidden = !isAdmin();
   mapBtn.replaceChildren(icon(state.ui.showMap ? 'panel-right-close' : 'map', { size: 19 }));
   mapBtn.classList.toggle('on', !!state.ui.showMap);
   mapBtn.title = state.ui.showMap ? 'Karte ausblenden' : 'Karte einblenden';
@@ -320,7 +365,7 @@ function render() {
   if (!vs.some((v) => v.id === state.ui.tab)) state.ui.tab = 'home';
   const view = state.ui.tab;
   document.body.dataset.view = view;
-  document.body.classList.toggle('map-on', !!state.ui.showMap && isAdmin());
+  document.body.classList.toggle('map-on', !!state.ui.showMap);
   document.body.classList.toggle('is-admin', isAdmin());
   $('#view-title').textContent = vs.find((v) => v.id === view).label;
   renderNav();
@@ -381,7 +426,7 @@ function setupImport() {
 
 function init() {
   setupVersion();
-  if (state.ui.showMap === undefined) state.ui.showMap = window.innerWidth >= 1024;
+  if (state.ui.showMap === undefined) state.ui.showMap = true;
   map = new MapView($('#map'), mapHandlers);
   subscribe(requestRender);
   document.addEventListener('pointerdown', () => { pointerDown = true; }, true);

@@ -62,7 +62,43 @@ export function tripResult(date, dir) {
   const week = frozenWeeks()[monday] || liveSnap();
   const names = Object.fromEntries(m.persons.map((p) => [p.id, p.name]));
   t.snap = tripSnap(week, t, allRoutes(), names);
-  return { trip: t, result: calcTrip(t, t.snap, state.split, dir) };
+  return { trip: t, result: calcTrip(t, t.snap, t.snap.split || state.split, dir) }; // Regel der jeweiligen Woche
+}
+
+/**
+ * Prognose: was kosten die kommenden Wochen mit den aktuellen Regelplänen und Tagesänderungen?
+ * → [{ monday, total, trips, persons: { [pid]: { share, trips, done } }, drivers: { [pid]: { trips, income } } }]
+ */
+export function forecast(count = 5) {
+  const t0 = todayIso();
+  const out = [];
+  for (let k = 0; k < count; k++) {
+    const monday = addDays(mondayOf(t0), k * 7);
+    const w = { monday, total: 0, trips: 0, persons: {}, drivers: {} };
+    for (const date of weekDates(monday)) {
+      for (const dir of dirsNow()) {
+        const r = tripResult(date, dir);
+        if (!r || !r.result.total) continue;
+        w.total += r.result.total;
+        w.trips++;
+        const drv = r.trip.driver;
+        if (drv) {
+          const d = (w.drivers[drv] ||= { trips: 0, income: 0 });
+          d.trips++;
+          d.income += r.result.total - (r.result.shares[drv] || 0); // was die anderen zahlen
+        }
+        for (const [pid, share] of Object.entries(r.result.shares)) {
+          if (!share) continue;
+          const x = (w.persons[pid] ||= { share: 0, trips: 0, done: 0 });
+          x.share += share;
+          x.trips++;
+          if (date <= t0) x.done += share;
+        }
+      }
+    }
+    out.push(w);
+  }
+  return out;
 }
 
 /** Meine Kosten in einer Woche: bisher (fällig) und geplant (Zukunft). */

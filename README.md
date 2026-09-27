@@ -11,16 +11,19 @@ Handy: Tab-Leiste unten · Tablet/Computer: Seitenleiste · Karte ein-/ausblendb
 
 **Admin** (wer die Fahrgemeinschaft erstellt; Admin-Rechte lassen sich teilen) – volle Kontrolle:
 - Ziel und Startadresse, **automatisch beste Abholreihenfolge** (Routenplaner), von Hand änderbar; Rückfahrt-Reihenfolge
-- Auto, Spritpreis (live an der Strecke), Aufteilungsregel, Mitfahrer (auch ohne App), pausieren statt löschen
+- Auto, Spritpreis (live an der Strecke), Aufteilungsregel, Mitfahrer (auch ohne App); Entfernen wirkt erst ab heute, vergangene Fahrten bleiben in der Abrechnung
 - Jeden Tag bearbeiten: wer fährt, anderer Fahrer, freier Tag
+- **Ganze Woche auf einmal:** im Kalender auf die KW tippen → je Person „Regelplan / Ganze Woche / Gar nicht“
+- **Prognose** für die kommenden Wochen: Gesamtkosten und Anteil jeder Person, die in der Woche mitfährt
 - Alle offenen Beträge, als bezahlt markieren, Nachricht/PayPal-Link kopieren
 - **Mitglieder & Rechte** (Admin geben/nehmen, entfernen, neuer Einladungslink) und **Änderungsprotokoll** (wer hat was wann geändert)
 
 **Mitfahrer** – einfach und geführt:
 - Einstieg Schritt für Schritt: Wer bist du? → Abholadresse → Regelplan
 - **Übersicht:** eigene Kosten, direkter **PayPal-Knopf** mit dem offenen Betrag, Preis pro Fahrt, nächste Fahrten (Hin & Zurück zu einem Tag zusammengefasst)
-- **Fahrten:** eigener Regelplan; Farbkalender (jede Person eine Farbe, oben Hin / unten Zurück); Tag antippen → einzeln an-/absagen
-- **Kosten:** offene Wochen, „Ich habe bezahlt“, „Wie berechnet?“ nur auf Wunsch
+- **Fahrten:** eigener Regelplan; Farbkalender (jede Person eine Farbe, oben Hin / unten Zurück); Tag antippen → einzeln an-/absagen; KW antippen → ganze Woche
+- **Strecke:** Karte mit Route und Abholreihenfolge, eigene Abholadresse ändern (auch auf der Karte)
+- **Kosten:** offene Wochen, „Ich habe bezahlt“, „Wie berechnet?“ nur auf Wunsch, Prognose der eigenen Kosten für die kommenden Wochen
 - Einstellung **Einfach / Detailliert** (Standard: einfach)
 
 ### Wie die App rechnet
@@ -28,7 +31,8 @@ Handy: Tab-Leiste unten · Tablet/Computer: Seitenleiste · Karte ein-/ausblendb
 - Wer an einem Tag fährt = **Regelplan** (gilt ab dem Tag der Änderung) + **einzelne Tagesänderungen** (die jüngere Änderung gewinnt)
 - Route je Fahrt: Start des Fahrers → Abholadressen der Mitfahrer dieses Tages (in Abholreihenfolge) → Ziel; wer nicht mitfährt, wird nicht angefahren
 - Jede Teilstrecke wird unter denen geteilt, die dort im Auto sitzen → man zahlt ab der eigenen Adresse
-- Abgeschlossene Wochen werden mit ihren Werten (Preis, Verbrauch, Adressen) eingefroren; geplante Fahrten werden erst ab dem Tag fällig
+- Jede Woche wird nur unter denen aufgeteilt, die in dieser Woche wirklich mitgefahren sind
+- Nichts wirkt rückwirkend: Regelplan, Fahrerwechsel und Entfernen gelten ab heute; abgeschlossene Wochen werden mit ihren Werten (Preis, Verbrauch, Adressen, Aufteilungsregel) eingefroren; geplante Fahrten werden erst ab dem Tag fällig
 
 ## Fahrgemeinschaft mit Login
 
@@ -78,10 +82,10 @@ Testet die Rechenlogik (Kosten, Teilstrecken-Aufteilung, Ausgleichszahlungen, Ka
 ```
 index.html          Seite (Seitenleiste, Titelzeile, Ansicht, Karte, Tab-Leiste, Dialoge)
 css/style.css       Gestaltung im Apple-Stil
-js/app.js           Start, Navigation je Rolle, Karte, Strecke (Admin), Hintergrund-Berechnungen
+js/app.js           Start, Navigation je Rolle, Karte, Strecke, Hintergrund-Berechnungen
 js/view-home.js     Übersicht, Willkommen, geführte Einrichtung
-js/view-trips.js    Regelplan, Farbkalender, Tag bearbeiten
-js/view-costs.js    Kosten (einfach/detailliert), bezahlen
+js/view-trips.js    Regelplan, Farbkalender, Tag / ganze Woche bearbeiten
+js/view-costs.js    Kosten (einfach/detailliert), bezahlen, Prognose
 js/view-settings.js Profil, Ansicht, Mitfahrer, Mitglieder & Rechte, Protokoll
 js/actions.js       Alle Änderungen: Rechte, Speicherort (Profil/gemeinsam), Protokoll
 js/model.js         Datenmodell: Regelplan, Tage, Profile zusammenführen, Strecke je Fahrt (getestet)

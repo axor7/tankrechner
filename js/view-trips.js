@@ -3,7 +3,7 @@ import { state, update, model, activePersons, personById, todayIso } from './sta
 import { mondayOf, addDays, weekDates, isoWeek, weekdayIndex } from './calc.js';
 import { planFor, isActive } from './model.js';
 import { isAdmin, inGroup, claims } from './account.js';
-import { me, setPlan, setDay, setDayOff, setDriver } from './actions.js';
+import { me, setPlan, setDay, setDayOff, setDriver, setWeek, weekPattern } from './actions.js';
 import { dirsNow, tripResult } from './derived.js';
 import { h, fmtEuro, fmtDate, toast } from './ui.js';
 import { icon } from './icons.js';
@@ -115,27 +115,86 @@ function calendarCard() {
     h('div', { class: 'cal' }, [0, 1, 2, 3, 4, 5].map((k) => {
       const mon = addDays(start, k * 7);
       return h('div', { class: `cal-week days-${days}` },
-        h('span', { class: 'cal-kw' }, `KW ${isoWeek(mon).week}`),
+        h('button', { type: 'button', class: 'cal-kw', 'aria-label': `KW ${isoWeek(mon).week}: ganze Woche festlegen`, onclick: () => openWeek(mon) },
+          `KW ${isoWeek(mon).week}`, icon('chevron-right', { size: 11 })),
         weekDates(mon).slice(0, days).map((date) => dayCell(date, m)));
     })),
-    h('p', { class: 'hint small' }, isAdmin() ? 'Tippe auf einen Tag, um ihn zu bearbeiten: wer fährt, wer ist Fahrer, freier Tag.' : 'Tippe auf einen Tag, um für diesen Tag an- oder abzusagen.'),
+    h('p', { class: 'hint small' }, isAdmin() ? 'Tippe auf einen Tag, um ihn zu bearbeiten – oder auf die KW, um für eine ganze Woche festzulegen, wer mitfährt.' : 'Tippe auf einen Tag, um an- oder abzusagen – oder auf die KW für die ganze Woche.'),
   );
 }
 
 // ---------- Tag bearbeiten ----------
 
 let sheetDate = null;
+let sheetWeek = null;
 const sheet = () => document.getElementById('day-dialog');
 
 export function openDay(date) {
-  sheetDate = date;
+  sheetDate = date; sheetWeek = null;
   renderSheet();
   if (!sheet().open) sheet().showModal();
 }
 
+export function openWeek(monday) {
+  sheetWeek = monday; sheetDate = null;
+  renderSheet();
+  if (!sheet().open) sheet().showModal();
+}
+
+/** Fahrten einer Person in der Woche zählen und erkennen, welchem Modus sie entspricht. */
+function weekStatus(m, pid, monday) {
+  const dirs = m.dirs;
+  const dates = weekDates(monday);
+  let count = 0;
+  for (const date of dates) for (const dir of dirs) if (m.dayInfo(date).riders[dir]?.includes(pid)) count++;
+  const matches = (mode) => {
+    const pat = weekPattern(pid, monday, mode);
+    return dates.every((date) => m.dayInfo(date).off || dirs.every((dir) => !!pat[date][dir] === !!m.dayInfo(date).riders[dir]?.includes(pid)));
+  };
+  const mode = count === 0 ? 'none' : matches('plan') ? 'plan' : matches('all') ? 'all' : 'custom';
+  return { count, mode };
+}
+
+function renderWeekSheet(d) {
+  const monday = sheetWeek;
+  const m = model();
+  const mine = me();
+  const admin = isAdmin();
+  const kw = isoWeek(monday).week;
+  const past = addDays(monday, 6) < todayIso();
+  const people = admin ? m.persons.filter(isActive) : m.persons.filter((p) => p.id === mine);
+  const MODES = [['plan', 'Regelplan'], ['all', 'Ganze Woche'], ['none', 'Gar nicht']];
+  d.replaceChildren(h('div', { class: 'sheet' },
+    h('div', { class: 'row between' },
+      h('h2', {}, `KW ${kw}`, h('span', { class: 'muted', style: { fontWeight: 400, fontSize: '.9rem' } }, ` · ${fmtDate(monday)} – ${fmtDate(addDays(monday, 6))}`)),
+      h('button', { type: 'button', class: 'icon-btn tinted', 'aria-label': 'Schließen', onclick: () => d.close() }, icon('x', { size: 18 }))),
+    h('p', { class: 'hint small' }, admin
+      ? 'Lege für die ganze Woche fest, wer mitfährt – ohne jeden Tag einzeln einzutragen. Einzelne Tage kannst du danach noch im Kalender ändern.'
+      : 'Lege fest, ob du diese Woche mitfährst. Einzelne Tage kannst du danach noch im Kalender ändern.'),
+    past ? h('p', { class: 'hint warn small' }, 'Diese Woche liegt in der Vergangenheit – Änderungen wirken sich auf die Abrechnung aus.') : null,
+    people.length ? h('div', { class: 'list week-list' }, people.map((p) => {
+      const st = weekStatus(m, p.id, monday);
+      return h('div', { class: 'list-row week-row' },
+        h('div', { class: 'row', style: { gap: '.5rem' } },
+          h('span', { class: 'dot', style: { '--pc': p.color } }),
+          h('span', { class: 'grow' }, p.name, p.id === mine ? h('span', { class: 'muted' }, ' (du)') : null,
+            p.id === state.defaultDriver ? h('span', { class: 'muted' }, ' · Fahrer') : null),
+          h('span', { class: 'muted small' }, st.count ? `${st.count} ${st.count === 1 ? 'Fahrt' : 'Fahrten'}` : 'fährt nicht')),
+        h('div', { class: 'segmented small' }, MODES.map(([mode, label]) => h('button', {
+          type: 'button', class: st.mode === mode ? 'active' : '', 'aria-pressed': String(st.mode === mode),
+          onclick: () => safe(() => setWeek(p.id, monday, mode)),
+        }, label))),
+        st.mode === 'custom' ? h('span', { class: 'hint small' }, 'Einzelne Tage geändert') : null,
+      );
+    })) : h('p', { class: 'hint' }, 'Wähle zuerst auf der Übersicht, wer du bist.'),
+  ));
+}
+
 export function renderSheet() {
   const d = sheet();
-  if (!d || !sheetDate) return;
+  if (!d) return;
+  if (sheetWeek) return renderWeekSheet(d);
+  if (!sheetDate) return;
   const date = sheetDate;
   const m = model();
   const info = m.dayInfo(date);

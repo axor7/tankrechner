@@ -10,12 +10,13 @@ export const uid = () => Math.random().toString(36).slice(2, 10);
 export const todayIso = () => toISODate(new Date());
 
 export function defaultState() {
-  const me = { id: uid(), name: 'Ich', color: COLORS[0], active: true, plan: [] };
+  const me = { id: uid(), name: 'Ich', color: COLORS[0], plan: [] };
   return {
     schema: 2,
     // ---- gemeinsam (in der Fahrgemeinschaft; ändern nur Admins) ----
     persons: [me],
     defaultDriver: me.id,          // wer fährt (Auto, Startadresse)
+    drivers: [],                   // Fahrerwechsel [{ from, id, at }] – gelten ab ihrem Datum
     destination: null,             // Ziel { label, lat, lng }
     roundTrip: true,
     manualKm: null,                // Kilometer, falls ohne Karte
@@ -64,7 +65,7 @@ export function save() {
 }
 
 /** Daten, die in einer Fahrgemeinschaft geteilt werden (Rest bleibt pro Gerät). */
-export const SHARED_KEYS = ['schema', 'persons', 'defaultDriver', 'destination', 'roundTrip', 'manualKm', 'order', 'optimizedOrder', 'returnOrder',
+export const SHARED_KEYS = ['schema', 'persons', 'defaultDriver', 'drivers', 'destination', 'roundTrip', 'manualKm', 'order', 'optimizedOrder', 'returnOrder',
   'route', 'routeCache', 'car', 'price', 'split', 'days', 'weeks', 'payments', 'setupDone', 'setupCar', 'optimizedFor'];
 
 export function sharedData(s = state) {

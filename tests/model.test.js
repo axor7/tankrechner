@@ -15,7 +15,7 @@ const shared = () => ({
   persons: [
     { id: 'max', name: 'Max', plan: [{ from: '2026-09-01', hin: MOFR, rueck: MOFR, at: 1 }], address: { label: 'Start', lat: 49.0, lng: 8.4, at: 1 } },
     { id: 'anna', name: 'Anna', plan: [{ from: '2026-09-01', hin: d(0, 2), rueck: d(0), at: 1 }] },
-    { id: 'ben', name: 'Ben', active: false, plan: [{ from: '2026-09-01', hin: MOFR, rueck: MOFR, at: 1 }] },
+    { id: 'ben', name: 'Ben', plan: [] }, // fährt nur ab und zu mit (keine festen Tage)
   ],
   days: {},
   car: { consumption: 10, extraPerKm: 0 },
@@ -29,13 +29,13 @@ test('Regelplan: jüngste gültige Version zählt, Änderung gilt erst ab ihrem 
   assert.equal(planFor(p, '2026-08-01').hin[0], false); // vor dem ersten Plan
 });
 
-test('Wer fährt: Plan, inaktiv, Tages-Änderung, freier Tag', () => {
+test('Wer fährt: Plan, ohne feste Tage, Tages-Änderung, freier Tag', () => {
   const s = shared();
   let m = buildModel(s);
   assert.deepEqual(m.dayInfo(MO).riders.hin, ['max', 'anna']);
   assert.deepEqual(m.dayInfo(MO).riders.rueck, ['max', 'anna']);
   assert.deepEqual(m.dayInfo(MI).riders.rueck, ['max']);
-  assert.deepEqual(m.dayInfo(DI).riders.hin, ['max']); // Ben ist inaktiv
+  assert.deepEqual(m.dayInfo(DI).riders.hin, ['max']); // Ben hat keine festen Tage
   s.days[DI] = { people: { anna: { hin: true, at: 2 } } };
   s.days[MO] = { off: true };
   m = buildModel(s);
@@ -174,4 +174,66 @@ test('Umstieg von Version 1: Fahrten werden zu Tages-Einträgen', () => {
   // Regelplan gilt ab heute
   assert.equal(planFor(v2.persons[1], '2026-09-28').hin[0], true);
   assert.equal(planFor(v2.persons[1], '2026-09-22').hin[1], false);
+});
+
+// ---------- Vergangene Wochen dürfen sich nicht ändern ----------
+import { driverAt } from '../js/model.js';
+
+const pastCost = (s, until = '2026-09-25') => {
+  const m = buildModel(s);
+  const live = liveWeekSnap(s, m.persons, 2);
+  const frozen = { '2026-09-21': liveWeekSnap(s, m.persons, 2) };
+  return weeklyDebts(deriveWeeks(m, '2026-09-21', '2026-09-21', { frozen, live, until }), {}, true, until);
+};
+
+test('Regelplan-Änderung heute ändert vergangene Wochen nicht', () => {
+  const s = shared();
+  delete s.persons[0].address;
+  s.manualKm = 50;
+  const before = pastCost(s);
+  // Anna fährt ab 28.09. gar nicht mehr
+  s.persons[1].plan = withPlanVersion(s.persons[1].plan, '2026-09-28', Array(7).fill(false), Array(7).fill(false));
+  assert.deepEqual(pastCost(s), before);
+});
+
+test('Fahrerwechsel gilt erst ab seinem Datum', () => {
+  const s = shared();
+  s.persons[1].plan = [{ from: '2026-09-01', hin: MOFR, rueck: MOFR }];
+  s.drivers = [{ from: '2026-09-01', id: 'max' }, { from: '2026-09-28', id: 'anna', at: 2 }];
+  s.defaultDriver = 'anna';
+  assert.equal(driverAt(s, '2026-09-25'), 'max');
+  assert.equal(driverAt(s, '2026-09-28'), 'anna');
+  const m = buildModel(s);
+  assert.equal(m.trip('2026-09-25', 'hin').driver, 'max');
+  assert.equal(m.trip('2026-09-28', 'hin').driver, 'anna');
+});
+
+test('Aufteilungsregel wird mit der Woche eingefroren', () => {
+  const s = shared();
+  delete s.persons[0].address;
+  s.manualKm = 50;
+  s.split = { mode: 'segment', driverPays: true };
+  const m = buildModel(s);
+  const frozen = { '2026-09-21': liveWeekSnap(s, m.persons, 2) };
+  s.split = { mode: 'segment', driverPays: false }; // später geändert
+  const live = liveWeekSnap(s, m.persons, 2);
+  const debts = weeklyDebts(deriveWeeks(m, '2026-09-21', '2026-09-28', { frozen, live, until: MO }), s.split, true, MO);
+  const byWeek = Object.fromEntries(debts.map((x) => [x.week, x.amount]));
+  assert.equal(byWeek['2026-09-21'], 15); // alte Regel: Fahrer zahlt mit → Anna die Hälfte von 3 × 10 €
+  assert.equal(byWeek['2026-09-28'], 20); // neue Regel: Anna zahlt alles (2 × 10 €)
+});
+
+test('Früheres „inaktiv“ wird ignoriert (galt rückwirkend)', () => {
+  const persons = mergePersons([{ id: 'x', active: false, plan: [{ from: '2026-09-01', hin: MOFR, rueck: MOFR }] }]);
+  assert.equal(persons[0].active, undefined);
+});
+
+test('Entfernte Person: vorher mitgefahren zählt, ab dem Entfernen nie mehr – auch nicht über eigene Tage', () => {
+  const s = shared();
+  Object.assign(s.persons[1], { archived: true, archivedFrom: DI });
+  const profiles = [{ user_id: 'u', person_id: 'anna', data: { days: { [MI]: { hin: true, at: 99 } } } }];
+  const m = buildModel(s, profiles);
+  assert.ok(m.rides('anna', MO, 'hin'));
+  assert.ok(!m.rides('anna', MI, 'hin'));
+  assert.ok(!m.dayInfo(MI).riders.hin.includes('anna'));
 });

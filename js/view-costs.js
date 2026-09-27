@@ -1,9 +1,9 @@
 // Ansicht „Kosten“: einfach (offene Beträge, bezahlen) – auf Wunsch mit allen Details.
-import { state, update, personById, todayIso } from './state.js';
+import { state, update, personById, todayIso, liveSnap } from './state.js';
 import { aggregate, settle, addDays, isoWeek, mondayOf, toISODate, FUELS } from './calc.js';
 import { isAdmin } from './account.js';
 import { me, markPaid, adminSet } from './actions.js';
-import { debtItems, entries, weekLabel } from './derived.js';
+import { debtItems, entries, weekLabel, forecast } from './derived.js';
 import { openByPair } from './debts.js';
 import { paymentMessage, paypalLink, paypalUser } from './pay.js';
 import { settingsUi } from './view-settings.js';
@@ -201,6 +201,51 @@ function detailed(el) {
   );
 }
 
+// ---------- Prognose ----------
+
+function forecastCard(mine) {
+  const admin = isAdmin();
+  const list = forecast(state.ui.forecastWeeks || 5);
+  const snap = liveSnap();
+  const kw = (m) => `KW ${isoWeek(m).week}`;
+  const range = (m) => `${fmtDate(m)} – ${fmtDate(addDays(m, 6))}`;
+  const thisWeek = mondayOf(todayIso());
+  const label = (w) => (w.monday === thisWeek ? 'Diese Woche' : w.monday === addDays(thisWeek, 7) ? 'Nächste Woche' : kw(w.monday));
+  const rows = list.map((w) => {
+    const persons = Object.entries(w.persons).sort((a, b) => b[1].share - a[1].share);
+    if (admin) {
+      return h('div', { class: 'list-row fc-row' },
+        h('div', { class: 'row between' },
+          h('span', {}, h('strong', {}, label(w)), h('span', { class: 'muted small' }, ` · ${range(w.monday)}`)),
+          h('strong', {}, w.trips ? `≈ ${fmtEuro(w.total)}` : '–')),
+        w.trips ? h('div', { class: 'fc-people' }, persons.map(([pid, x]) => h('span', { class: 'fc-person', style: { '--pc': personById(pid)?.color || 'var(--gray)' } },
+          h('span', { class: 'dot' }), `${nameOf(pid)} ${fmtEuro(x.share)}`, h('span', { class: 'muted' }, ` · ${x.trips}×`)))) : h('span', { class: 'muted small' }, 'Keine Fahrten geplant'));
+    }
+    const x = w.persons[mine];
+    const d = w.drivers[mine];
+    return h('div', { class: 'list-row fc-row' },
+      h('div', { class: 'row between' },
+        h('span', {}, h('strong', {}, label(w)), h('span', { class: 'muted small' }, ` · ${range(w.monday)}`)),
+        h('strong', {}, x ? `≈ ${fmtEuro(x.share)}` : '–')),
+      h('span', { class: 'muted small' }, [
+        x ? `${x.trips} ${x.trips === 1 ? 'Fahrt' : 'Fahrten'}${x.done ? ` · davon ${fmtEuro(x.done)} schon gefahren` : ''}` : d ? '' : 'Du fährst nicht mit',
+        d ? `${x ? ' · ' : ''}Du fährst ${d.trips}× – die anderen zahlen dir ≈ ${fmtEuro(d.income)}` : '',
+      ].join('')));
+  });
+  const sum = admin ? list.reduce((a, w) => a + w.total, 0) : list.reduce((a, w) => a + (w.persons[mine]?.share || 0), 0);
+  return h('section', { class: 'card' },
+    h('div', { class: 'row between' }, h('h2', {}, 'Prognose'), h('span', { class: 'muted small' }, `${list.length} Wochen ${admin ? 'gesamt ' : ''}≈ ${fmtEuro(sum)}`)),
+    h('p', { class: 'hint small' }, admin
+      ? 'So teuer werden die kommenden Wochen, wenn alle wie eingeplant mitfahren (Regelplan + geänderte Tage). Pro Person nur, wer in der Woche wirklich mitfährt.'
+      : 'So viel kosten dich die kommenden Wochen, wenn du wie eingeplant mitfährst.'),
+    mine || admin ? h('div', { class: 'list' }, rows) : h('p', { class: 'hint' }, 'Wähle zuerst auf der Übersicht, wer du bist.'),
+    h('div', { class: 'row between', style: { marginTop: '.5rem' } },
+      h('span', { class: 'hint small', style: { margin: 0 } }, `Mit ${fmtPrice(snap.price)}/l und ${String(snap.consumption).replace('.', ',')} l/100 km – ändert sich der Spritpreis, ändert sich auch die Prognose.`),
+      h('button', { type: 'button', class: 'btn btn-small', onclick: () => update((s) => { s.ui.forecastWeeks = (s.ui.forecastWeeks || 5) >= 9 ? 5 : 9; }) },
+        (state.ui.forecastWeeks || 5) >= 9 ? 'Weniger' : 'Mehr Wochen')),
+  );
+}
+
 // ---------- Aufteilungsregel (für die Einstellungen) ----------
 
 export function rulesCard() {
@@ -223,6 +268,7 @@ export function rulesCard() {
 export function renderCosts(el) {
   const mine = me();
   el.append(openCard(mine));
+  el.append(forecastCard(mine));
   if (state.ui.detail === 'detailed') detailed(el);
   else el.append(h('button', { type: 'button', class: 'btn', style: { alignSelf: 'center' }, onclick: () => update((s) => { s.ui.detail = 'detailed'; }) }, icon('list-checks', { size: 17 }), 'Alle Details anzeigen'));
 }

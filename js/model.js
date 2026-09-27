@@ -7,7 +7,8 @@
 // Bei Widersprüchen gewinnt die jüngere Änderung (Zeitstempel `at`).
 import { weekdayIndex, mondayOf, addDays, weekDates, DIRECTIONS, tripPeople } from './calc.js';
 
-export const isActive = (p) => p?.active !== false;
+/** Archivierte Personen (gelöscht, aber mit vergangenen Fahrten) werden in Listen ausgeblendet. */
+export const isActive = (p) => !p?.archived;
 const newer = (a, b) => ((b?.at || 0) > (a?.at || 0) ? b : a);
 const EMPTY_WEEK = () => Array(7).fill(false);
 
@@ -18,7 +19,8 @@ const EMPTY_WEEK = () => Array(7).fill(false);
  * profiles: [{ userId, personId, data }]
  */
 export function mergePersons(persons = [], profiles = []) {
-  const out = persons.map((p) => ({ ...p, plan: [...(p.plan || [])] }));
+  // Früheres „inaktiv“ gibt es nicht mehr (galt rückwirkend) – wer nicht mitfährt, hat keine Tage im Regelplan
+  const out = persons.map(({ active, ...p }) => ({ ...p, plan: [...(p.plan || [])] }));
   const byId = new Map(out.map((p) => [p.id, p]));
   for (const pr of profiles) {
     if (!pr.personId) continue;
@@ -60,6 +62,14 @@ export function withPlanVersion(plan = [], from, hin, rueck, at = Date.now()) {
 
 // ---------- Tage ----------
 
+/** Wer war an diesem Tag der (normale) Fahrer? Fahrerwechsel gelten erst ab ihrem Datum. */
+export function driverAt(shared, date) {
+  let best = null;
+  for (const v of shared.drivers || []) if (v.from <= date && (!best || v.from > best.from || (v.from === best.from && (v.at || 0) >= (best.at || 0)))) best = v;
+  return best ? best.id : shared.defaultDriver;
+}
+
+
 /**
  * Modell für eine Fahrgemeinschaft bauen.
  * shared: gemeinsame Daten, profiles: Mitglieder-Profile
@@ -77,7 +87,8 @@ export function buildModel(shared, profiles = []) {
     const day = days[date];
     if (day?.off) return false;
     const p = byId.get(pid);
-    let value = !!(p && isActive(p) && planFor(p, date)[dir][weekdayIndex(date)]);
+    if (p?.archived && p.archivedFrom && date >= p.archivedFrom) return false; // entfernt: ab dann nie mehr dabei
+    let value = !!(p && planFor(p, date)[dir][weekdayIndex(date)]);
     let at = -1;
     for (const e of [day?.people?.[pid], profileDays.get(pid)?.[date]]) {
       if (e && e[dir] !== undefined && (e.at || 0) >= at) { value = !!e[dir]; at = e.at || 0; }
@@ -93,7 +104,8 @@ export function buildModel(shared, profiles = []) {
       const riders = persons.filter((p) => rides(p.id, date, dir)).map((p) => p.id);
       let driver = day.driver?.[dir];
       if (driver && !riders.includes(driver)) driver = null;
-      if (!driver && riders.includes(shared.defaultDriver)) driver = shared.defaultDriver;
+      const regular = driverAt(shared, date);
+      if (!driver && riders.includes(regular)) driver = regular;
       info.riders[dir] = riders;
       info.driver[dir] = riders.length ? driver || null : null;
     }
@@ -139,6 +151,7 @@ export function liveWeekSnap(shared, persons, price) {
     order: effectiveOrder(shared, persons),
     returnOrder: shared.returnOrder || null,
     manualKm: Number(shared.manualKm) || 0,
+    split: { ...(shared.split || {}) },                 // Aufteilungsregel gilt pro Woche
     at: Date.now(),
   };
 }
@@ -157,7 +170,7 @@ const short = (label, fallback) => (label ? label.split(',')[0] : fallback);
  * Mitfahrer ohne Adresse steigen beim Fahrer zu. Ohne Fahrer-Adresse oder Ziel: manuelle Kilometer.
  */
 export function tripSnap(week, trip, routes = {}, names = {}) {
-  const base = { consumption: week.consumption, price: week.price, extraPerKm: week.extraPerKm, fuel: week.fuel };
+  const base = { consumption: week.consumption, price: week.price, extraPerKm: week.extraPerKm, fuel: week.fuel, split: week.split };
   const a = week.addresses || {};
   const start = a[trip.driver];
   const dest = week.destination;

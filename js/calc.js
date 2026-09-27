@@ -193,7 +193,7 @@ export function aggregate(entries, opts = {}) {
   let km = 0;
   const trips = [];
   for (const e of entries) {
-    const r = calcTrip(e.trip, e.snap, opts, e.direction);
+    const r = calcTrip(e.trip, e.snap, e.snap?.split || opts, e.direction); // Regel der jeweiligen Woche
     total += r.total;
     fuelCost += r.fuelCost;
     extraCost += r.extraCost;

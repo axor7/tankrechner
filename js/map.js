@@ -41,7 +41,9 @@ export class MapView {
     title.className = 'map-menu-title';
     title.textContent = 'Punkt setzen als …';
     box.append(title);
-    for (const [kind, label] of this.h.menuItems || [['start', 'Start'], ['via', 'Zwischenstopp'], ['end', 'Ziel']]) {
+    const items = typeof this.h.menuItems === 'function' ? this.h.menuItems() : this.h.menuItems || [['start', 'Start'], ['via', 'Zwischenstopp'], ['end', 'Ziel']];
+    if (!items.length) return;
+    for (const [kind, label] of items) {
       const b = document.createElement('button');
       b.className = `btn btn-small btn-${kind}`;
       b.textContent = label;

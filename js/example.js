@@ -8,15 +8,15 @@ export function loadExample() {
   const MOFR = [true, true, true, true, true, false, false];
   const days = (...i) => Array.from({ length: 7 }, (_, k) => i.includes(k));
   const plan = (hin, rueck = hin) => [{ from: since, hin, rueck, at: 1 }];
-  const me = { id: uid(), name: 'Max', color: COLORS[0], active: true, plan: plan(MOFR), paypal: 'maxmuster',
+  const me = { id: uid(), name: 'Max', color: COLORS[0], plan: plan(MOFR), paypal: 'maxmuster',
     address: { label: 'Karlsruhe Hauptbahnhof, 76137 Karlsruhe', lat: 48.9936, lng: 8.4011, at: 1 } };
-  const anna = { id: uid(), name: 'Anna', color: COLORS[1], active: true, plan: plan(days(0, 1, 2, 3), days(0, 1, 2)),
+  const anna = { id: uid(), name: 'Anna', color: COLORS[1], plan: plan(days(0, 1, 2, 3), days(0, 1, 2)),
     address: { label: 'Ettlingen Stadtbahnhof, 76275 Ettlingen', lat: 48.9406, lng: 8.4075, at: 1 } };
-  const ben = { id: uid(), name: 'Ben', color: COLORS[2], active: true, plan: plan(MOFR),
+  const ben = { id: uid(), name: 'Ben', color: COLORS[2], plan: plan(MOFR),
     address: { label: 'Pforzheim Hauptbahnhof, 75175 Pforzheim', lat: 48.8934, lng: 8.7026, at: 1 } };
-  const clara = { id: uid(), name: 'Clara', color: COLORS[3], active: true, plan: plan(days(1, 3)),
+  const clara = { id: uid(), name: 'Clara', color: COLORS[3], plan: plan(days(1, 3)),
     address: { label: 'Leonberg Bahnhof, 71229 Leonberg', lat: 48.8003, lng: 9.0048, at: 1 } };
-  const tom = { id: uid(), name: 'Tom', color: COLORS[4], active: false, plan: [] }; // fährt nur ab und zu mit
+  const tom = { id: uid(), name: 'Tom', color: COLORS[4], plan: [] }; // fährt nur ab und zu mit (einzelne Tage)
   s.persons = [me, anna, ben, clara, tom];
   s.defaultDriver = me.id;
   s.destination = { label: 'Stuttgart Hauptbahnhof, 70173 Stuttgart', lat: 48.784, lng: 9.1817 };

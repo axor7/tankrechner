@@ -2,8 +2,8 @@
 // oder in den gemeinsamen Daten (Admin) und schreibt ins Änderungsprotokoll.
 import { state, update, model, personById, todayIso, uid, COLORS } from './state.js';
 import { inGroup, isAdmin, myPersonId, updateProfile, log } from './account.js';
-import { withPlanVersion, isActive } from './model.js';
-import { mondayOf, addDays } from './calc.js';
+import { withPlanVersion, isActive, planFor } from './model.js';
+import { mondayOf, addDays, isoWeek } from './calc.js';
 import { fmtDate } from './ui.js';
 
 const WD = ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'];
@@ -24,7 +24,7 @@ function sharedPerson(s, pid) {
   let p = s.persons.find((x) => x.id === pid);
   if (!p) {
     const m = personById(pid);
-    p = { id: pid, name: m?.name || 'Neu', color: m?.color || COLORS[5], active: true, plan: [] };
+    p = { id: pid, name: m?.name || 'Neu', color: m?.color || COLORS[5], plan: [] };
     s.persons.push(p);
   }
   return p;
@@ -126,7 +126,7 @@ export function addPerson(name) {
   if (!isAdmin()) deny();
   update((s) => {
     const used = new Set(model().persons.map((p) => p.color));
-    s.persons.push({ id: uid(), name, color: COLORS.find((c) => !used.has(c)) || COLORS[s.persons.length % COLORS.length], active: true, plan: [] });
+    s.persons.push({ id: uid(), name, color: COLORS.find((c) => !used.has(c)) || COLORS[s.persons.length % COLORS.length], plan: [] });
   });
   log(`Mitfahrer „${name}“ angelegt`);
 }
@@ -137,19 +137,88 @@ export function setPersonField(pid, field, value, text) {
   if (text) log(text);
 }
 
+/** Löschen: Wer schon mitgefahren ist, wird nur archiviert (ab heute keine Fahrten mehr), damit alte Wochen gleich bleiben. */
 export function removePerson(pid) {
   if (!isAdmin()) deny();
   const name = nameOf(pid);
+  const m = model();
+  const start = m.startDate();
+  const today = todayIso();
+  let rodeBefore = false;
+  if (start) for (let d = start; d < today && !rodeBefore; d = addDays(d, 1)) rodeBefore = m.dirs.some((dir) => m.rides(pid, d, dir));
   update((s) => {
-    s.persons = s.persons.filter((x) => x.id !== pid);
-    for (const day of Object.values(s.days)) {
-      if (day.people) delete day.people[pid];
-      for (const dir of ['hin', 'rueck']) if (day.driver?.[dir] === pid) delete day.driver[dir];
+    if (rodeBefore) {
+      const p = sharedPerson(s, pid);
+      p.archived = true;
+      p.archivedFrom = today;
+      p.plan = withPlanVersion(p.plan, today, Array(7).fill(false), Array(7).fill(false));
+      // künftige Einzel-Anmeldungen entfernen
+      for (const [date, day] of Object.entries(s.days)) if (date >= today && day.people) delete day.people[pid];
+    } else {
+      s.persons = s.persons.filter((x) => x.id !== pid);
+      for (const day of Object.values(s.days)) {
+        if (day.people) delete day.people[pid];
+        for (const dir of ['hin', 'rueck']) if (day.driver?.[dir] === pid) delete day.driver[dir];
+      }
     }
-    s.order = (s.order || []).filter((x) => x !== pid);
-    if (s.defaultDriver === pid) s.defaultDriver = s.persons.find(isActive)?.id || s.persons[0]?.id;
+    // Wer schon mitgefahren ist, behält seinen Platz in der Reihenfolge: sonst änderte sich die Route der laufenden Woche rückwirkend
+    if (!rodeBefore) {
+      s.order = (s.order || []).filter((x) => x !== pid);
+      s.optimizedOrder = (s.optimizedOrder || []).filter((x) => x !== pid);
+    }
   });
-  log(`Mitfahrer „${name}“ gelöscht`);
+  log(rodeBefore ? `Mitfahrer „${name}“ entfernt (vergangene Fahrten bleiben in der Abrechnung)` : `Mitfahrer „${name}“ gelöscht`);
+}
+
+/** Fahrer (Auto) wechseln – gilt ab heute, vergangene Fahrten behalten ihren Fahrer. */
+export function setDefaultDriver(pid) {
+  if (!isAdmin()) deny();
+  const today = todayIso();
+  update((s) => {
+    s.drivers ||= [];
+    if (!s.drivers.length && s.defaultDriver) s.drivers.push({ from: '0000-01-01', id: s.defaultDriver, at: 0 });
+    s.drivers = [...s.drivers.filter((v) => v.from !== today), { from: today, id: pid, at: Date.now() }];
+    s.defaultDriver = pid;
+  });
+  log(`Fahrer ist ab ${fmtDate(today)} ${nameOf(pid)}`);
+}
+
+/**
+ * Ganze Woche auf einmal: mode = 'plan' (wie im Regelplan), 'all' (an allen Fahrtagen), 'none' (gar nicht).
+ * Admin für alle, Mitfahrer nur für sich.
+ */
+/** Wer fährt in dieser Woche an welchem Tag – je nach Modus 'plan' | 'all' | 'none'. */
+export function weekPattern(pid, monday, mode) {
+  const m = model();
+  const out = {};
+  for (let k = 0; k < 7; k++) {
+    const date = addDays(monday, k);
+    const plan = planFor(personById(pid), date);
+    const patch = {};
+    for (const dir of m.dirs) {
+      if (mode === 'none') patch[dir] = false;
+      else if (mode === 'plan') patch[dir] = !!plan[dir][k];
+      else if (pid === state.defaultDriver) patch[dir] = k < 5 || !!plan[dir][k];
+      // „ganze Woche“: an allen Tagen, an denen gefahren wird (Mo–Fr bzw. wenn der Fahrer fährt)
+      else patch[dir] = (k < 5 && !m.dayInfo(date).off) || !!m.dayInfo(date).driver[dir];
+    }
+    out[date] = patch;
+  }
+  return out;
+}
+
+/** Eine ganze Woche für eine Person festlegen (Schalter an der KW im Kalender). */
+export function setWeek(pid, monday, mode) {
+  const at = Date.now();
+  const entries = {};
+  for (const [date, patch] of Object.entries(weekPattern(pid, monday, mode))) entries[date] = { ...patch, at };
+  if (isMe(pid)) {
+    updateProfile((d) => { d.days ||= {}; for (const [date, e] of Object.entries(entries)) d.days[date] = e; });
+  } else if (isAdmin()) {
+    update((s) => { for (const [date, e] of Object.entries(entries)) { const day = (s.days[date] ||= {}); day.people ||= {}; day.people[pid] = e; } });
+  } else deny();
+  const text = { plan: 'nach Regelplan', all: 'fährt die ganze Woche mit', none: 'fährt diese Woche nicht mit' }[mode];
+  log(`${nameOf(pid)} in KW ${isoWeek(monday).week}: ${text}`);
 }
 
 /** Admin-Einstellung ändern und protokollieren. */
