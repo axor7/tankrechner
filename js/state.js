@@ -55,16 +55,47 @@ export function save() {
   try { localStorage.setItem(KEY, JSON.stringify(state)); } catch { /* Speicher voll o. ä. */ }
 }
 
+/** Daten, die in einer Fahrgemeinschaft geteilt werden (Rest bleibt pro Gerät: Ansicht, API-Key, Messwerte …). */
+export const SHARED_KEYS = ['persons', 'defaultDriver', 'stops', 'roundTrip', 'manualKm', 'returnOrder', 'route', 'returnRoute',
+  'routeCache', 'car', 'price', 'split', 'weeks', 'payments'];
+
+export function sharedData(s = state) {
+  const o = {};
+  for (const k of SHARED_KEYS) if (s[k] !== undefined) o[k] = s[k];
+  return o;
+}
+
+let changeHook = null;
+/** Wird bei jeder Änderung mit der Änderungsfunktion aufgerufen (für die Synchronisation). */
+export function onChange(fn) { changeHook = fn; }
+
 /** Zustand ändern. render=false, wenn gerade getippt wird und nichts neu gezeichnet werden soll. */
 export function update(fn, { render = true } = {}) {
   fn(state);
   save();
+  changeHook?.(fn);
   if (render) listeners.forEach((l) => l(state));
 }
 
 export function replaceState(next) {
   const d = defaultState();
   state = { ...d, ...next, ui: { ...d.ui, ...(next.ui || {}) } };
+  save();
+  // Für die Synchronisation als Änderung der gemeinsamen Daten melden
+  const shared = structuredClone(sharedData(state));
+  changeHook?.((s) => { Object.assign(s, structuredClone(shared)); });
+  listeners.forEach((l) => l(state));
+}
+
+/** Serverstand der gemeinsamen Daten übernehmen, danach offene eigene Änderungen erneut anwenden. */
+export function applyRemote(data, replay = []) {
+  const d = defaultState();
+  const next = { ...state };
+  for (const k of SHARED_KEYS) next[k] = data[k] !== undefined ? structuredClone(data[k]) : d[k];
+  state = next;
+  for (const fn of replay) {
+    try { fn(state); } catch { /* Änderung passt nicht mehr zum neuen Stand – überspringen */ }
+  }
   save();
   listeners.forEach((l) => l(state));
 }

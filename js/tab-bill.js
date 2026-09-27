@@ -4,6 +4,7 @@ import { aggregate, settle, addDays, isoWeek, mondayOf, toISODate, DIRECTIONS, F
 import { paymentMessage, paypalLink, paypalUser } from './pay.js';
 import { weeklyDebts, withPayments, openByPair, markPaid, payKey } from './debts.js';
 import { payUi } from './tab-trips.js';
+import { inGroup, myPersonId, myName } from './account.js';
 import { h, stat, fmtEuro, fmtKm, fmtL, fmtDate, fmtPrice, fmtDuration, toast } from './ui.js';
 
 function periodRange() {
@@ -173,7 +174,7 @@ function transferRow(t, range, agg) {
         type: 'button', class: `btn btn-small ${paid ? 'btn-ghost' : 'btn-paid'}`,
         onclick: () => update((s) => {
           if (paid) delete s.payments[key];
-          else s.payments[key] = { amount: t.amount, at: Date.now() };
+          else s.payments[key] = { amount: t.amount, at: Date.now(), ...(inGroup() ? { by: myName() } : {}) };
         }),
       }, paid ? '↺ Doch nicht bezahlt' : '✓ Bezahlt') : null,
     ),
@@ -187,11 +188,17 @@ const deselected = new Set(); // abgewählte Wochen (Standard: alle offenen ausg
 function openCard() {
   const items = withPayments(weeklyDebts(state.weeks, state.split, state.roundTrip), state.payments);
   if (!items.length) return null;
-  const pairs = openByPair(items);
+  const me = myPersonId();
+  const pairs = openByPair(items).sort((a, b) => Number(b.from === me || b.to === me) - Number(a.from === me || a.to === me));
+  const iOwe = pairs.filter((p) => p.from === me).reduce((a, p) => a + p.total, 0);
+  const owedToMe = pairs.filter((p) => p.to === me).reduce((a, p) => a + p.total, 0);
   const paidItems = items.filter((d) => d.open <= 0).sort((a, b) => b.week.localeCompare(a.week));
 
   return h('section', { class: 'card' },
     h('h2', {}, '💰 Offene Beträge'),
+    me ? h('div', { class: `callout my-summary ${iOwe > 0 ? '' : 'good'}` },
+      iOwe > 0 ? ['Du musst noch ', h('strong', {}, fmtEuro(iOwe)), ' zahlen.'] : 'Du hast alles bezahlt ✓',
+      owedToMe > 0 ? [' Dir schulden andere noch ', h('strong', {}, fmtEuro(owedToMe)), '.'] : null) : null,
     pairs.length
       ? h('p', { class: 'hint small' }, 'Alle Wochen, die noch nicht als bezahlt abgehakt sind. Wähle aus, welche Wochen in die Nachricht sollen – z. B. wenn jemand eine Woche vergessen hat.')
       : h('p', {}, 'Alles bezahlt 🎉'),
@@ -203,9 +210,9 @@ function openCard() {
         amount: d.open,
         details: d.paid > 0 ? `Rest, ${fmtEuro(d.paid)} schon bezahlt` : `${d.trips} Fahrten, ${fmtKm(d.km)}`,
       }));
-      return h('div', { class: 'debt' },
+      return h('div', { class: `debt ${pair.from === me || pair.to === me ? 'mine' : ''}` },
         h('div', { class: 'debt-head' },
-          h('span', { class: 'who', style: { color: personById(pair.from)?.color } }, nameOf(pair.from)),
+          h('span', { class: 'who', style: { color: personById(pair.from)?.color } }, nameOf(pair.from), pair.from === me ? h('span', { class: 'me-tag' }, 'du') : null),
           h('span', { class: 'arrow muted' }, '→'),
           h('span', { class: 'who', style: { color: personById(pair.to)?.color } }, nameOf(pair.to)),
           h('strong', {}, fmtEuro(pair.total))),
@@ -224,7 +231,10 @@ function openCard() {
             type: 'button', class: 'btn btn-small btn-paid', disabled: !selected.length,
             onclick: () => {
               for (const d of pair.items) deselected.delete(d.key); // übrige offene Wochen wieder auswählen
-              update((s) => { s.payments = markPaid(s.payments, selected); });
+              update((s) => {
+                s.payments = markPaid(s.payments, selected);
+                if (inGroup()) for (const d of selected) s.payments[d.key].by = myName(); // wer hat abgehakt?
+              });
               toast(`${nameOf(pair.from)}: ${fmtEuro(selTotal)} als bezahlt abgehakt`, 'ok');
             },
           }, '✓ Als bezahlt abhaken'),
@@ -235,7 +245,7 @@ function openCard() {
       h('summary', {}, `Bereits bezahlt (${paidItems.length})`),
       h('ul', { class: 'paid-list' }, paidItems.map((d) => h('li', {},
         h('span', {}, `${nameOf(d.from)} → ${nameOf(d.to)} · ${weekLabel(d.week)}`),
-        h('span', { class: 'muted' }, `${fmtEuro(d.paid)}${d.paidAt ? ` am ${new Date(d.paidAt).toLocaleDateString('de-DE')}` : ''}`),
+        h('span', { class: 'muted' }, `${fmtEuro(d.paid)}${d.paidAt ? ` am ${new Date(d.paidAt).toLocaleDateString('de-DE')}` : ''}${state.payments[d.key]?.by ? ` · abgehakt von ${state.payments[d.key].by}` : ''}`),
         h('button', { type: 'button', class: 'link', onclick: () => update((s) => { delete s.payments[d.key]; }) }, 'rückgängig'),
       ))),
     ) : null,

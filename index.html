@@ -22,6 +22,7 @@
       </div>
     </div>
     <div id="summary" class="summary" aria-live="polite"></div>
+    <button type="button" id="btn-account" class="acc-btn" aria-label="Konto und Fahrgemeinschaft"></button>
     <details class="menu">
       <summary class="icon-btn big" aria-label="Menü">☰</summary>
       <div class="menu-list">
@@ -35,13 +36,15 @@
     </details>
   </header>
 
+  <dialog id="account-dialog" aria-label="Konto und Fahrgemeinschaft"></dialog>
+
   <main class="layout">
     <aside id="panel" class="panel">
       <nav id="tabs" class="tabs" role="tablist"></nav>
       <div id="panel-content"></div>
       <footer class="foot">
         <strong data-version></strong><br>
-        Alle Daten bleiben in deinem Browser. Karte © OpenStreetMap-Mitwirkende · Routing OSRM · Adresssuche Photon · Spritpreise tankerkoenig.de (CC BY 4.0)
+        Ohne Anmeldung bleiben alle Daten in deinem Browser. Karte © OpenStreetMap-Mitwirkende · Routing OSRM · Adresssuche Photon · Spritpreise tankerkoenig.de (CC BY 4.0)
       </footer>
     </aside>
     <section class="map-wrap">

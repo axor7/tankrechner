@@ -465,3 +465,40 @@ a.btn { text-decoration: none; display: inline-flex; align-items: center; }
 .btn-paid { background: var(--good-soft); color: var(--good); border-color: color-mix(in srgb, var(--good) 40%, transparent); }
 .transfers li.is-paid { opacity: .75; }
 .transfers li.is-paid strong { text-decoration: line-through; }
+
+/* Konto & Fahrgemeinschaft */
+.acc-btn {
+  display: inline-flex; align-items: center; gap: .35rem; font: inherit; font-size: .85rem; cursor: pointer; max-width: 12rem;
+  border: 1px solid var(--border); background: var(--surface-2); color: var(--text); border-radius: 999px; padding: .3rem .75rem;
+}
+.acc-btn.in-group { border-color: var(--primary); background: var(--primary-soft); font-weight: 600; }
+.acc-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.acc-status { font-size: .65rem; }
+#account-dialog {
+  border: 0; border-radius: 16px; padding: 0; width: min(480px, calc(100vw - 1.5rem)); max-height: calc(100dvh - 2rem);
+  background: var(--surface); color: var(--text); box-shadow: 0 20px 60px rgb(0 0 0 / .35);
+}
+#account-dialog::backdrop { background: rgb(0 0 0 / .45); }
+.acc { padding: 1rem 1.1rem 1.2rem; display: flex; flex-direction: column; gap: .9rem; }
+.acc h2 { margin: 0; }
+.acc h3 { font-size: .95rem; margin: 0 0 .4rem; }
+.acc-form { display: flex; flex-direction: column; gap: .6rem; }
+.acc-form.row { flex-direction: row; }
+.acc input[type="email"], .acc input[type="password"] {
+  font: inherit; color: var(--text); background: var(--surface-2); border: 1px solid var(--border); border-radius: 10px; padding: .55rem .7rem; width: 100%;
+}
+.acc-error { margin: 0; background: color-mix(in srgb, var(--danger) 12%, transparent); color: var(--danger); border-radius: 10px; padding: .55rem .75rem; font-size: .9rem; }
+.acc-user { font-size: .9rem; gap: .5rem; flex-wrap: wrap; }
+.acc-group { border: 1px solid var(--primary); border-radius: 12px; padding: .8rem; display: flex; flex-direction: column; gap: .7rem; background: color-mix(in srgb, var(--primary-soft) 40%, transparent); }
+.acc-groups { display: flex; flex-direction: column; gap: 1rem; }
+.invite { display: flex; gap: .4rem; margin-top: .25rem; }
+.invite input { font-size: .8rem; }
+.members, .group-list { list-style: none; margin: .25rem 0 0; padding: 0; display: flex; flex-direction: column; gap: .25rem; font-size: .88rem; }
+.group-list li { display: flex; align-items: center; justify-content: space-between; gap: .5rem; background: var(--surface-2); border-radius: 10px; padding: .4rem .5rem .4rem .75rem; }
+.danger-text { color: var(--danger); }
+.callout.good .btn { margin-left: .5rem; }
+.me-tag { font-size: .7rem; font-weight: 700; background: var(--primary); color: #fff; border-radius: 999px; padding: .05rem .45rem; margin-left: .3rem; }
+.debt.mine { border-color: var(--primary); box-shadow: 0 0 0 1px var(--primary); }
+.my-summary { font-size: .95rem; }
+@media (max-width: 600px) { .acc-btn { max-width: 9rem; } }
+.callout.my-summary:not(.good) { background: color-mix(in srgb, var(--warn) 14%, transparent); border: 1px solid color-mix(in srgb, var(--warn) 35%, transparent); }

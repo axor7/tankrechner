@@ -9,6 +9,7 @@ import { renderTripsTab } from './tab-trips.js';
 import { renderBillTab } from './tab-bill.js';
 import { loadExample } from './example.js';
 import { setupVersion } from './version.js';
+import { initAccount, inGroup } from './account.js';
 
 const TABS = [
   { id: 'route', icon: '🗺️', label: 'Strecke' },
@@ -388,6 +389,11 @@ function syncMap() {
   const stopsKey = JSON.stringify(state.stops.map((s) => [s.id, s.lat, s.lng, s.label]));
   if (stopsKey !== mapKeys.stops) { map.setStops(state.stops); mapKeys.stops = stopsKey; }
   const rKey = [state.route?.distance, state.route?.coords?.length, state.alternatives.length, state.selectedAlt, state.returnRoute?.distance, state.roundTrip].join('|');
+  if (state.route?.distance !== mapKeys.routeDist) {
+    // Neue Route (z. B. aus der Fahrgemeinschaft geladen) → Karte darauf ausrichten
+    if (state.route && mapKeys.routeDist !== undefined) map.fit(state.stops, state.route);
+    mapKeys.routeDist = state.route?.distance ?? null;
+  }
   if (rKey !== mapKeys.route) {
     map.setRoute(state.route, state.alternatives, state.selectedAlt || 0, state.roundTrip && isCustomReturn() ? state.returnRoute : null);
     mapKeys.route = rKey;
@@ -468,13 +474,13 @@ function setupMenu() {
     e.target.value = '';
   };
   $('#btn-example').onclick = async () => {
-    if (!confirm('Beispieldaten laden? Deine aktuellen Daten werden ersetzt (vorher ggf. exportieren).')) return;
+    if (!confirm(inGroup() ? 'Beispieldaten laden? Das ersetzt die Daten der GANZEN Fahrgemeinschaft – für alle Mitglieder!' : 'Beispieldaten laden? Deine aktuellen Daten werden ersetzt (vorher ggf. exportieren).')) return;
     replaceState(loadExample());
     mapKeys = {};
     recalcRoute();
   };
   $('#btn-reset').onclick = () => {
-    if (!confirm('Wirklich alles löschen?')) return;
+    if (!confirm(inGroup() ? 'Wirklich alles löschen? Das löscht die Daten der GANZEN Fahrgemeinschaft – für alle Mitglieder!' : 'Wirklich alles löschen?')) return;
     replaceState(defaultState());
     mapKeys = {};
   };
@@ -488,6 +494,7 @@ function init() {
   document.addEventListener('pointerup', releasePointer, true);
   document.addEventListener('pointercancel', releasePointer, true);
   setupMenu();
+  initAccount();
   requestRender();
   map.fit(state.stops, state.route);
   if (!state.route && validStops().length >= 2) recalcRoute();

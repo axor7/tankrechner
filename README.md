@@ -37,6 +37,19 @@ Eine Website für Fahrgemeinschaften: Strecke mit Zwischenstopps planen, aktuell
 - **Bezahlen per PayPal**: PayPal.me-Namen bei den Mitfahrern hinterlegen – pro Zahlung gibt es eine fertige Nachricht (Betrag, Fahrten, km, PayPal-Link `paypal.me/name/12.34EUR`) und den PayPal-Link einzeln zum Kopieren. „Freunde & Familie“ wird in der Nachricht genannt; auswählen muss es der Zahlende in PayPal selbst.
 - **Offene Beträge**: alle noch nicht bezahlten Wochen pro Person; mehrere Wochen auswählen (z. B. wenn jemand eine Woche vergessen hat) → eine Nachricht mit Liste und Gesamtbetrag. Bezahltes abhaken (auch rückgängig); ändert sich eine Woche nachträglich, bleibt nur die Differenz offen.
 
+## Fahrgemeinschaft mit Login (optional)
+
+Über den Knopf **👤 Anmelden** oben rechts:
+
+- Konto mit E-Mail und Passwort anlegen
+- **Fahrgemeinschaft anlegen** (die bisherigen eigenen Daten können mitgenommen werden) und den **Einladungslink** an die Kollegen schicken
+- Jeder wählt „Wer bist du?“ – dann zeigt die Abrechnung „Du musst noch … zahlen“ und jeder kann selbst abhaken, was er bezahlt hat (mit „abgehakt von …“)
+- Änderungen werden sofort gespeichert und bei allen live aktualisiert; ändern zwei gleichzeitig, gehen beide Änderungen nicht verloren
+- „Nur lokal arbeiten“ schaltet zurück auf die eigenen Daten dieses Geräts
+
+Technik: [Supabase](https://supabase.com) (Anmeldung + Datenbank). Einrichtung einmalig: `supabase/setup.sql` im SQL Editor ausführen und unter Authentication → Email „Confirm email“ ausschalten
+(der eingebaute Mailversand von Supabase erreicht nur Mitglieder des Supabase-Teams). Ohne Anmeldung bleibt alles wie bisher nur im Browser.
+
 ## So wird fair gerechnet
 
 Jede Fahrt besteht aus Teilstrecken (Start → Stopp → … → Ziel). Die Kosten einer Teilstrecke
@@ -72,7 +85,7 @@ Der Key wird nur in deinem Browser gespeichert. Ohne Key funktioniert alles mit 
 
 ## Daten & Datenschutz
 
-Alle Daten (Personen, Fahrten, Einstellungen) liegen nur im `localStorage` deines Browsers.
+Ohne Anmeldung liegen alle Daten (Personen, Fahrten, Einstellungen) nur im `localStorage` deines Browsers. In einer Fahrgemeinschaft liegen die gemeinsamen Daten in der Supabase-Datenbank; lesen und ändern können sie nur deren Mitglieder. Tankerkönig-Key und Messwerte bleiben immer auf dem Gerät.
 Über das Menü ☰ kannst du sie als JSON exportieren/importieren, z. B. um sie auf ein anderes Gerät zu übertragen.
 Externe Dienste: OpenStreetMap (Karte), OSRM (Routing), Photon (Adresssuche), Tankerkönig (Preise).
 
@@ -100,5 +113,9 @@ js/example.js       Beispieldaten
 js/version.js       Versionsanzeige & Hinweis auf neue Version
 js/pay.js           PayPal.me-Links und Nachrichtentexte
 js/debts.js         Offene Beträge je Woche, bezahlt abhaken
+js/account.js       Konto & Fahrgemeinschaft (Oberfläche)
+js/cloud.js         Supabase: Anmeldung, Gruppen, Speichern, Live-Updates
+js/sync.js          Synchronisation mit Konfliktbehandlung (getestet)
+supabase/setup.sql  Datenbank-Einrichtung (Tabellen, Zugriffsregeln)
 tests/              Tests (node --test)
 ```
