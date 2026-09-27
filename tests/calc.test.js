@@ -138,3 +138,17 @@ test('Zusatzkosten (ct/km) werden pro Teilstrecke wie Sprit aufgeteilt', () => {
   close(mixed.total, 15);
   close(mixed.persons.ich.paid, 15);
 });
+
+test('Nebenkosten ausschalten: nur Sprit wird abgerechnet', () => {
+  const s = { legs: [{ km: 20 }, { km: 80 }], consumption: 5, price: 2, extraPerKm: 5 };
+  const trip = { driver: 'ich', legs: [['ich', 'anna'], ['ich', 'anna', 'ben']] };
+  const off = aggregate([{ trip, snap: s }], { includeExtra: false });
+  close(off.total, 10); // nur Sprit
+  close(off.extraCost, 0);
+  close(off.extraExcluded, 5); // wird trotzdem zur Anzeige mitgezählt
+  close(off.persons.ben.share, 8 / 3);
+  close(off.persons.ich.paid, 10);
+  const on = aggregate([{ trip, snap: s }]);
+  close(on.total, 15);
+  close(on.extraExcluded, 0);
+});

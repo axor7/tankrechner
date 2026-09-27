@@ -52,16 +52,19 @@ export function ridersOnLeg(trip, i, legCount) {
  * opts.mode: 'segment' (jede Teilstrecke wird unter den dort Mitfahrenden geteilt)
  *            'equal'   (Gesamtkosten gleich auf alle Mitfahrenden der Fahrt)
  * opts.driverPays: zahlt der Fahrer seinen Anteil selbst mit?
+ * opts.includeExtra: Nebenkosten (ct/km) mit abrechnen? (Standard: ja)
  */
 export function calcTrip(trip, snap, opts = {}) {
   const mode = opts.mode || 'segment';
   const driverPays = opts.driverPays !== false;
+  const withExtra = opts.includeExtra !== false;
   const n = snap.legs.length;
   const shares = {};
   const km = {};
   let total = 0;
   let fuelCost = 0;
   let extraCost = 0;
+  let extraExcluded = 0; // Nebenkosten, die ausgeschaltet sind (nur zur Anzeige)
   let liters = 0;
   let dist = 0;
   const legDetails = [];
@@ -70,10 +73,12 @@ export function calcTrip(trip, snap, opts = {}) {
   for (let i = 0; i < n; i++) {
     const leg = snap.legs[i];
     const c = legCost(leg.km, snap);
+    const cost = withExtra ? c.total : c.fuel;
     const riders = ridersOnLeg(trip, i, n);
-    total += c.total;
+    total += cost;
     fuelCost += c.fuel;
-    extraCost += c.extra;
+    if (withExtra) extraCost += c.extra;
+    else extraExcluded += c.extra;
     liters += c.liters;
     dist += leg.km;
     for (const p of riders) add(km, p, leg.km);
@@ -82,8 +87,8 @@ export function calcTrip(trip, snap, opts = {}) {
       payers = payers.filter((p) => p !== trip.driver);
       if (!payers.length) payers = [trip.driver];
     }
-    const per = payers.length ? c.total / payers.length : 0;
-    legDetails.push({ legIndex: i, km: leg.km, cost: c.total, riders: [...riders], payers, per });
+    const per = payers.length ? cost / payers.length : 0;
+    legDetails.push({ legIndex: i, km: leg.km, cost, riders: [...riders], payers, per });
     if (mode === 'segment') for (const p of payers) add(shares, p, per);
   }
 
@@ -96,7 +101,7 @@ export function calcTrip(trip, snap, opts = {}) {
     for (const p of payers) add(shares, p, total / payers.length);
   }
 
-  return { total, fuelCost, extraCost, liters, km: dist, shares, kmPerPerson: km, payer: trip.driver || null, legs: legDetails };
+  return { total, fuelCost, extraCost, extraExcluded, liters, km: dist, shares, kmPerPerson: km, payer: trip.driver || null, legs: legDetails };
 }
 
 /** Summiert beliebig viele Fahrten: [{trip, snap, date, direction}] */
@@ -106,6 +111,7 @@ export function aggregate(entries, opts = {}) {
   let total = 0;
   let fuelCost = 0;
   let extraCost = 0;
+  let extraExcluded = 0;
   let liters = 0;
   let km = 0;
   const trips = [];
@@ -114,6 +120,7 @@ export function aggregate(entries, opts = {}) {
     total += r.total;
     fuelCost += r.fuelCost;
     extraCost += r.extraCost;
+    extraExcluded += r.extraExcluded;
     liters += r.liters;
     km += r.km;
     for (const [p, v] of Object.entries(r.shares)) get(p).share += v;
@@ -122,7 +129,7 @@ export function aggregate(entries, opts = {}) {
     trips.push({ ...e, result: r });
   }
   for (const p of Object.values(persons)) p.balance = p.paid - p.share;
-  return { total, fuelCost, extraCost, liters, km, persons, trips };
+  return { total, fuelCost, extraCost, extraExcluded, liters, km, persons, trips };
 }
 
 /** Wer zahlt wem wie viel? Minimiert grob die Anzahl Überweisungen. Beträge in Euro, auf Cent gerundet. */

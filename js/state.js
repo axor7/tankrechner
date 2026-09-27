@@ -26,7 +26,7 @@ export function defaultState() {
     apiKey: '',
     stations: [],
     observations: [],
-    split: { mode: 'segment', driverPays: true },
+    split: { mode: 'segment', driverPays: true, includeExtra: true },
     weeks: {},
     ui: { tab: 'route', week: mondayOf(toISODate(new Date())), showWeekend: false, period: 'week', from: '', to: '' },
   };

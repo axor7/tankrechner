@@ -270,7 +270,7 @@ function renderSummary() {
   $('#summary').replaceChildren(
     h('div', { class: 'pill' }, '🛣️ ', km ? fmtKm(km) : 'keine Strecke'),
     h('div', { class: 'pill' }, '⛽ ', `${FUELS[state.car.fuel]?.label || ''} ${fmtPrice(price)}`),
-    h('div', { class: 'pill strong' }, '💶 ', km ? `${fmtEuro(c.total)} pro Fahrt` : '–'),
+    h('div', { class: 'pill strong' }, '💶 ', km ? `${fmtEuro(state.split.includeExtra === false ? c.fuel : c.total)} pro Fahrt` : '–'),
   );
 }
 

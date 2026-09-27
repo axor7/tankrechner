@@ -1,7 +1,7 @@
 // Tab "Abrechnung": fair aufteilen, wer schuldet wem wie viel.
 import { state, update, personById } from './state.js';
-import { aggregate, settle, addDays, isoWeek, mondayOf, toISODate, DIRECTIONS, directedLegs } from './calc.js';
-import { h, stat, fmtEuro, fmtKm, fmtL, fmtDate, toast } from './ui.js';
+import { aggregate, settle, addDays, isoWeek, mondayOf, toISODate, DIRECTIONS, directedLegs, FUELS } from './calc.js';
+import { h, stat, fmtEuro, fmtKm, fmtL, fmtDate, fmtPrice, toast } from './ui.js';
 
 function periodRange() {
   const ui = state.ui;
@@ -77,9 +77,58 @@ function rulesCard() {
   );
 }
 
+/** Werte aus allen Wochen im Zeitraum: einzelner Wert oder Spanne "a – b". */
+function spread(values, fmt) {
+  const u = [...new Set(values)].sort((a, b) => a - b);
+  if (!u.length) return '–';
+  return u.length === 1 ? fmt(u[0]) : `${fmt(u[0])} – ${fmt(u[u.length - 1])}`;
+}
+
+const fmtDec = (v) => String(Math.round(v * 100) / 100).replace('.', ',');
+
+function valuesCard(entries, agg) {
+  const snaps = [...new Set(entries.map((e) => e.snap))];
+  const extraOn = state.split.includeExtra !== false;
+  const extraAll = agg.extraCost + agg.extraExcluded;
+  const varies = ['consumption', 'price', 'extraPerKm'].some((k) => new Set(snaps.map((s) => s[k])).size > 1);
+  const row = (label, value, note) => h('tr', {}, h('td', {}, label), h('td', {}, h('strong', {}, value), note ? h('div', { class: 'muted small' }, note) : null));
+
+  return h('section', { class: 'card' },
+    h('h2', {}, 'Alle Werte im Überblick'),
+    h('table', { class: 'table values' }, h('tbody', {},
+      row('Kraftstoff', [...new Set(snaps.map((s) => FUELS[s.fuel]?.label || s.fuel))].join(', ')),
+      row('Verbrauch', `${spread(snaps.map((s) => s.consumption), fmtDec)} l/100 km`),
+      row('Spritpreis pro Liter', spread(snaps.map((s) => s.price), fmtPrice),
+        agg.liters > 0 && new Set(snaps.map((s) => s.price)).size > 1 ? `ø ${fmtPrice(agg.fuelCost / agg.liters)} (gewichtet nach Litern)` : null),
+      row('Nebenkosten pro km', snaps.some((s) => s.extraPerKm > 0) ? `${spread(snaps.map((s) => s.extraPerKm), fmtDec)} ct/km` : 'keine'),
+      row('Einfache Strecke', spread(snaps.map((s) => Math.round(s.legs.reduce((a, l) => a + l.km, 0) * 10) / 10), fmtKm)),
+      row('Gefahren', fmtKm(agg.km), `${agg.trips.length} Fahrten`),
+      row('Verbrauchte Liter', fmtL(agg.liters)),
+      row('Spritkosten', fmtEuro(agg.fuelCost)),
+      row('Nebenkosten', fmtEuro(extraAll), extraAll > 0 && !extraOn ? 'ausgeschaltet – nicht in der Abrechnung' : null),
+      row('Kosten pro km', agg.km ? `${fmtDec((agg.total / agg.km) * 100)} ct` : '–'),
+      row('ø pro Fahrt', agg.trips.length ? fmtEuro(agg.total / agg.trips.length) : '–'),
+      h('tr', { class: 'total' }, h('td', {}, 'Abgerechnet'), h('td', {}, h('strong', {}, fmtEuro(agg.total)))),
+    )),
+    varies ? h('p', { class: 'hint small' }, 'Die Werte unterscheiden sich zwischen den Wochen im Zeitraum – jede Woche wird mit ihren eigenen Werten abgerechnet.') : null,
+    h('label', { class: 'switch-row' },
+      h('span', {},
+        h('strong', {}, 'Nebenkosten abrechnen'),
+        h('div', { class: 'muted small' }, extraAll > 0
+          ? `Verschleiß & Co.: ${fmtEuro(extraAll)} in diesem Zeitraum`
+          : 'Im Zeitraum sind keine Nebenkosten eingetragen (Tab „Auto & Sprit“ → „Weitere Kosten pro km“).')),
+      h('input', {
+        type: 'checkbox', class: 'switch', role: 'switch', checked: extraOn,
+        onchange: (e) => update((s) => { s.split.includeExtra = e.target.checked; }),
+      }),
+    ),
+  );
+}
+
 function shareText(range, agg, transfers) {
   const lines = [`⛽ Tankkosten ${range.label}`, `Gesamt: ${fmtEuro(agg.total)} (${fmtKm(agg.km)}, ${agg.trips.length} Fahrten)`];
-  if (agg.extraCost > 0) lines.push(`davon Sprit ${fmtEuro(agg.fuelCost)}, Zusatzkosten ${fmtEuro(agg.extraCost)}`);
+  if (agg.extraCost > 0) lines.push(`davon Sprit ${fmtEuro(agg.fuelCost)}, Nebenkosten ${fmtEuro(agg.extraCost)}`);
+  else if (agg.extraExcluded > 0) lines.push('(ohne Nebenkosten)');
   lines.push('');
   for (const p of state.persons) {
     const x = agg.persons[p.id];
@@ -140,7 +189,7 @@ export function renderBillTab(el) {
   el.append(
     h('section', { class: 'card' },
       h('div', { class: 'stats' },
-        stat('Gesamtkosten', fmtEuro(agg.total), agg.extraCost > 0 ? `Sprit ${fmtEuro(agg.fuelCost)} · Zusatz ${fmtEuro(agg.extraCost)}` : null),
+        stat('Gesamtkosten', fmtEuro(agg.total), agg.extraCost > 0 ? `Sprit ${fmtEuro(agg.fuelCost)} · Nebenkosten ${fmtEuro(agg.extraCost)}` : agg.extraExcluded > 0 ? 'ohne Nebenkosten' : null),
         stat('Gefahren', fmtKm(agg.km), `${agg.trips.length} Fahrten`),
         stat('Verbraucht', fmtL(agg.liters)),
       ),
@@ -178,5 +227,6 @@ export function renderBillTab(el) {
     ),
     rulesCard(),
     detailsCard(agg),
+    valuesCard(entries, agg),
   );
 }

@@ -269,7 +269,8 @@ function costCard() {
   const km = legs.reduce((a, l) => a + l.km, 0);
   if (!km) return null;
   const snap = { consumption: state.car.consumption, price: effectivePrice(), extraPerKm: state.car.extraPerKm };
-  const one = legCost(km, snap);
+  const c = legCost(km, snap);
+  const one = { ...c, total: state.split.includeExtra === false ? c.fuel : c.total }; // Nebenkosten ggf. ausgeschaltet
   const factor = state.roundTrip ? 2 : 1;
   return h('section', { class: 'card' },
     h('h2', {}, 'Kosten auf einen Blick'),
