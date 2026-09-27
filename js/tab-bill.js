@@ -3,8 +3,10 @@ import { state, update, personById } from './state.js';
 import { aggregate, settle, addDays, isoWeek, mondayOf, toISODate, DIRECTIONS, FUELS } from './calc.js';
 import { paymentMessage, paypalLink, paypalUser } from './pay.js';
 import { weeklyDebts, withPayments, openByPair, markPaid, payKey } from './debts.js';
-import { payUi } from './tab-trips.js';
-import { inGroup, myPersonId, myName } from './account.js';
+import { currentMe } from './tab-trips.js';
+import { settingsUi } from './view-settings.js';
+import { inGroup, myName } from './account.js';
+import { icon } from './icons.js';
 import { h, stat, fmtEuro, fmtKm, fmtL, fmtDate, fmtPrice, fmtDuration, toast } from './ui.js';
 
 function periodRange() {
@@ -20,7 +22,11 @@ function periodRange() {
   return { from: '0000-01-01', to: '9999-12-31', label: 'Alle Fahrten' };
 }
 
+const todayIso = () => toISODate(new Date());
+
+/** Fahrten im Zeitraum – nur bis heute (geplante Fahrten sind noch nicht fällig). */
 export function collectEntries(from, to) {
+  if (to > todayIso()) to = todayIso();
   const out = [];
   const dirs = state.roundTrip ? DIRECTIONS : ['hin'];
   for (const week of Object.values(state.weeks)) {
@@ -50,9 +56,9 @@ function periodCard(range) {
       type: 'button', class: ui.period === p ? 'active' : '', onclick: () => update((s) => { s.ui.period = p; }),
     }, l))),
     h('div', { class: 'week-nav' },
-      step ? h('button', { type: 'button', class: 'icon-btn big', onclick: () => nav(-1) }, '‹') : null,
+      step ? h('button', { type: 'button', class: 'icon-btn big', 'aria-label': 'Zurück', onclick: () => nav(-1) }, icon('chevron-left', { size: 22 })) : null,
       h('div', { class: 'week-title' }, h('strong', {}, range.label)),
-      step ? h('button', { type: 'button', class: 'icon-btn big', onclick: () => nav(1) }, '›') : null,
+      step ? h('button', { type: 'button', class: 'icon-btn big', 'aria-label': 'Weiter', onclick: () => nav(1) }, icon('chevron-right', { size: 22 })) : null,
     ),
     ui.period === 'custom' ? h('div', { class: 'grid2' },
       h('label', { class: 'field' }, 'Von', h('input', { type: 'date', value: ui.from, onchange: (e) => update((s) => { s.ui.from = e.target.value; }) })),
@@ -61,7 +67,7 @@ function periodCard(range) {
   );
 }
 
-function rulesCard() {
+export function rulesCard() {
   const segment = state.split.mode === 'segment';
   return h('section', { class: 'card' },
     h('h2', {}, 'Aufteilungsregel'),
@@ -72,9 +78,9 @@ function rulesCard() {
     h('p', { class: 'hint' }, segment
       ? 'Jede Teilstrecke wird nur unter denen aufgeteilt, die auf ihr im Auto sitzen. Wer nur hin- oder nur zurückfährt oder erst am Zwischenstopp zusteigt, zahlt nur seine Kilometer.'
       : 'Die Kosten einer Fahrt werden gleichmäßig auf alle verteilt, die bei dieser Fahrt irgendwo dabei sind – egal ab welchem Stopp.'),
-    h('label', { class: 'check' },
-      h('input', { type: 'checkbox', checked: state.split.driverPays, onchange: (e) => update((s) => { s.split.driverPays = e.target.checked; }) }),
-      ' Fahrer zahlt seinen Anteil mit'),
+    h('label', { class: 'switch-row' },
+      h('span', {}, 'Fahrer zahlt seinen Anteil mit'),
+      h('input', { type: 'checkbox', class: 'switch', checked: state.split.driverPays, onchange: (e) => update((s) => { s.split.driverPays = e.target.checked; }) })),
     h('p', { class: 'hint small' }, state.split.driverPays
       ? 'Der Fahrer wird wie alle anderen mitgerechnet (üblich, wenn sich alle das Fahren teilen oder der Fahrer den Weg sowieso hätte).'
       : 'Die Mitfahrer übernehmen die kompletten Kosten, der Fahrer fährt „kostenlos“ (z. B. als Ausgleich für Fahrzeit und Verschleiß).'),
@@ -120,7 +126,7 @@ function valuesCard(entries, agg) {
         h('strong', {}, 'Nebenkosten abrechnen'),
         h('div', { class: 'muted small' }, extraAll > 0
           ? `Verschleiß & Co.: ${fmtEuro(extraAll)} in diesem Zeitraum`
-          : 'Im Zeitraum sind keine Nebenkosten eingetragen (Tab „Auto & Sprit“ → „Weitere Kosten pro km“).')),
+          : 'Im Zeitraum sind keine Nebenkosten eingetragen (Einstellungen → Auto → Weitere Kosten pro km).')),
       h('input', {
         type: 'checkbox', class: 'switch', role: 'switch', checked: extraOn,
         onchange: (e) => update((s) => { s.split.includeExtra = e.target.checked; }),
@@ -135,10 +141,17 @@ const copy = async (text, msg) => {
 
 const weekLabel = (monday) => `KW ${isoWeek(monday).week} (${fmtDate(monday)} – ${fmtDate(addDays(monday, 6))})`;
 
-function goToPaypalSettings() {
-  payUi.open = true;
-  update((s) => { s.ui.tab = 'trips'; });
-  setTimeout(() => document.getElementById('pay-settings')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
+function goToPaypalSettings(personId) {
+  settingsUi.openPerson = personId;
+  update((s) => { s.ui.tab = 'settings'; });
+  setTimeout(() => document.getElementById(`person-${personId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }), 60);
+}
+
+/** Anzahl offener Zahlungen, die mich betreffen (oder alle, wenn ich unbekannt bin) – für das Abzeichen in der Navigation. */
+export function openBadgeCount() {
+  const me = currentMe();
+  const pairs = openByPair(withPayments(weeklyDebts(state.weeks, state.split, state.roundTrip, todayIso()), state.payments));
+  return me ? pairs.filter((p) => p.from === me).length : 0;
 }
 
 /** Nachricht + PayPal-Link-Knöpfe für eine Zahlung (eine oder mehrere Wochen). */
@@ -147,10 +160,10 @@ function payButtons(fromId, toId, items) {
   const total = Math.round(items.reduce((a, x) => a + x.amount, 0) * 100) / 100;
   const message = paymentMessage({ fromName: nameOf(fromId), toName: nameOf(toId), items, paypal: pp });
   return [
-    h('button', { type: 'button', class: 'btn btn-small btn-primary', disabled: !items.length, onclick: () => copy(message, 'Nachricht kopiert – jetzt z. B. in WhatsApp einfügen') }, '📋 Nachricht kopieren'),
+    h('button', { type: 'button', class: 'btn btn-small btn-primary', disabled: !items.length, onclick: () => copy(message, 'Nachricht kopiert – jetzt z. B. in WhatsApp einfügen') }, icon('copy', { size: 15 }), 'Nachricht kopieren'),
     pp
-      ? h('button', { type: 'button', class: 'btn btn-small btn-pp', disabled: !items.length, onclick: () => copy(paypalLink(pp, total), 'PayPal-Link kopiert') }, '🅿️ PayPal-Link kopieren')
-      : h('button', { type: 'button', class: 'link', onclick: goToPaypalSettings }, `PayPal von ${nameOf(toId)} hinterlegen`),
+      ? h('button', { type: 'button', class: 'btn btn-small btn-pp', disabled: !items.length, onclick: () => copy(paypalLink(pp, total), 'PayPal-Link kopiert') }, icon('link', { size: 15 }), 'PayPal-Link')
+      : h('button', { type: 'button', class: 'link', onclick: () => goToPaypalSettings(toId) }, `PayPal von ${nameOf(toId)} hinterlegen`),
   ];
 }
 
@@ -166,7 +179,7 @@ function transferRow(t, range, agg) {
     h('span', { class: 'who', style: { color: from?.color } }, nameOf(t.from)),
     h('span', { class: 'arrow' }, '→'),
     h('span', { class: 'who', style: { color: to?.color } }, nameOf(t.to)),
-    paid ? h('span', { class: 'badge-paid' }, '✓ bezahlt') : null,
+    paid ? h('span', { class: 'badge-paid' }, 'bezahlt') : null,
     h('strong', {}, fmtEuro(t.amount)),
     h('div', { class: 'pay-actions' },
       paid ? null : payButtons(t.from, t.to, [{ label: range.label === 'Alle Fahrten' ? 'alle Fahrten' : range.label, amount: t.amount, details: x ? `${x.trips} Fahrten, ${fmtKm(x.km)}` : '' }]),
@@ -176,7 +189,7 @@ function transferRow(t, range, agg) {
           if (paid) delete s.payments[key];
           else s.payments[key] = { amount: t.amount, at: Date.now(), ...(inGroup() ? { by: myName() } : {}) };
         }),
-      }, paid ? '↺ Doch nicht bezahlt' : '✓ Bezahlt') : null,
+      }, icon(paid ? 'rotate-ccw' : 'check', { size: 15 }), paid ? 'Doch nicht bezahlt' : 'Bezahlt') : null,
     ),
   );
 }
@@ -186,22 +199,22 @@ function transferRow(t, range, agg) {
 const deselected = new Set(); // abgewählte Wochen (Standard: alle offenen ausgewählt)
 
 function openCard() {
-  const items = withPayments(weeklyDebts(state.weeks, state.split, state.roundTrip), state.payments);
+  const items = withPayments(weeklyDebts(state.weeks, state.split, state.roundTrip, todayIso()), state.payments);
   if (!items.length) return null;
-  const me = myPersonId();
+  const me = currentMe();
   const pairs = openByPair(items).sort((a, b) => Number(b.from === me || b.to === me) - Number(a.from === me || a.to === me));
   const iOwe = pairs.filter((p) => p.from === me).reduce((a, p) => a + p.total, 0);
   const owedToMe = pairs.filter((p) => p.to === me).reduce((a, p) => a + p.total, 0);
   const paidItems = items.filter((d) => d.open <= 0).sort((a, b) => b.week.localeCompare(a.week));
 
   return h('section', { class: 'card' },
-    h('h2', {}, '💰 Offene Beträge'),
+    h('h2', {}, 'Offene Beträge'),
     me ? h('div', { class: `callout my-summary ${iOwe > 0 ? '' : 'good'}` },
-      iOwe > 0 ? ['Du musst noch ', h('strong', {}, fmtEuro(iOwe)), ' zahlen.'] : 'Du hast alles bezahlt ✓',
+      iOwe > 0 ? ['Du musst noch ', h('strong', {}, fmtEuro(iOwe)), ' zahlen.'] : 'Du hast alles bezahlt.',
       owedToMe > 0 ? [' Dir schulden andere noch ', h('strong', {}, fmtEuro(owedToMe)), '.'] : null) : null,
     pairs.length
       ? h('p', { class: 'hint small' }, 'Alle Wochen, die noch nicht als bezahlt abgehakt sind. Wähle aus, welche Wochen in die Nachricht sollen – z. B. wenn jemand eine Woche vergessen hat.')
-      : h('p', {}, 'Alles bezahlt 🎉'),
+      : h('p', {}, 'Alles bezahlt – nichts mehr offen.'),
     pairs.map((pair) => {
       const selected = pair.items.filter((d) => !deselected.has(d.key));
       const selTotal = Math.round(selected.reduce((a, d) => a + d.open, 0) * 100) / 100;
@@ -237,7 +250,7 @@ function openCard() {
               });
               toast(`${nameOf(pair.from)}: ${fmtEuro(selTotal)} als bezahlt abgehakt`, 'ok');
             },
-          }, '✓ Als bezahlt abhaken'),
+          }, icon('check', { size: 15 }), 'Als bezahlt abhaken'),
         ),
       );
     }),
@@ -283,8 +296,8 @@ function detailsCard(agg) {
       h('summary', {}, h('span', {}, fmtDate(date, { weekday: true })), h('strong', {}, fmtEuro(trips.reduce((a, t) => a + t.result.total, 0)))),
       trips.map((t) => h('div', { class: 'trip-detail' },
         h('div', { class: 'row between' },
-          h('strong', {}, t.direction === 'hin' ? '➜ Hinfahrt' : '⟲ Rückfahrt'),
-          h('span', { class: 'muted' }, `🚗 ${nameOf(t.trip.driver)} · ${fmtKm(t.result.km)} · ${fmtEuro(t.result.total)}`)),
+          h('strong', {}, t.direction === 'hin' ? 'Hinfahrt' : 'Rückfahrt'),
+          h('span', { class: 'muted' }, `Fahrer: ${nameOf(t.trip.driver)} · ${fmtKm(t.result.km)} · ${fmtEuro(t.result.total)}`)),
         h('ul', { class: 'leg-list' }, t.result.legs.map((l) => {
           return h('li', {},
             h('span', {}, `${l.from} → ${l.to} `, h('small', { class: 'muted' }, `${t.result.estimated ? '≈ ' : ''}${fmtKm(l.km)}`)),
@@ -295,7 +308,7 @@ function detailsCard(agg) {
   );
 }
 
-export function renderBillTab(el) {
+export function renderBillTab(el, ctx) {
   const range = periodRange();
   const entries = collectEntries(range.from, range.to);
   const open = openCard();
@@ -304,10 +317,10 @@ export function renderBillTab(el) {
 
   if (!entries.length) {
     el.append(h('section', { class: 'card empty-state' },
-      h('div', { class: 'big-icon' }, '🧾'),
-      h('p', {}, 'In diesem Zeitraum sind noch keine Fahrten eingetragen.'),
-      h('button', { type: 'button', class: 'btn btn-primary', onclick: () => update((s) => { s.ui.tab = 'trips'; }) }, 'Fahrten eintragen'),
-    ), rulesCard());
+      icon('receipt', { size: 40, cls: 'big-icon' }),
+      h('p', {}, 'In diesem Zeitraum sind bis heute keine Fahrten eingetragen.'),
+      h('button', { type: 'button', class: 'btn btn-primary', onclick: () => ctx.go('trips') }, 'Fahrten eintragen'),
+    ));
     return;
   }
 
@@ -338,7 +351,7 @@ export function renderBillTab(el) {
       h('h2', {}, 'Ausgleich'),
       transfers.length
         ? h('ul', { class: 'transfers' }, transfers.map((t) => transferRow(t, range, agg)))
-        : h('p', {}, 'Alles ausgeglichen 🎉'),
+        : h('p', {}, 'Alles ausgeglichen.'),
       h('p', { class: 'hint small' }, state.ui.period === 'week'
         ? 'Annahme: Wer fährt, bezahlt auch den Sprit für diese Fahrt. Wechselt ihr euch ab, wird hier automatisch verrechnet.'
         : 'Annahme: Wer fährt, bezahlt auch den Sprit. Abhaken, was bezahlt ist, geht wochenweise – oben unter „Offene Beträge“ oder in der Wochenansicht.'),
@@ -349,12 +362,15 @@ export function renderBillTab(el) {
             const text = shareText(range, agg, transfers);
             try { await navigator.clipboard.writeText(text); toast('Text kopiert – z. B. in WhatsApp einfügen', 'ok'); } catch { prompt('Text kopieren:', text); }
           },
-        }, '📋 Als Text kopieren'),
-        navigator.share ? h('button', { type: 'button', class: 'btn', onclick: () => navigator.share({ text: shareText(range, agg, transfers) }).catch(() => {}) }, '↗ Teilen') : null,
-        h('button', { type: 'button', class: 'btn btn-ghost', onclick: () => window.print() }, '🖨 Drucken'),
+        }, icon('copy', { size: 16 }), 'Als Text kopieren'),
+        navigator.share ? h('button', { type: 'button', class: 'btn', onclick: () => navigator.share({ text: shareText(range, agg, transfers) }).catch(() => {}) }, icon('share', { size: 16 }), 'Teilen') : null,
+        h('button', { type: 'button', class: 'btn btn-ghost', onclick: () => window.print() }, icon('printer', { size: 16 }), 'Drucken'),
       ),
     ),
-    rulesCard(),
+    h('button', { type: 'button', class: 'list list-row', onclick: () => ctx.go('settings') },
+      h('span', { class: 'grow' }, h('span', { class: 'title' }, 'Aufteilungsregel'),
+        h('span', { class: 'sub' }, `${state.split.mode === 'segment' ? 'Nach Teilstrecken' : 'Gleich pro Fahrt'} · Fahrer zahlt ${state.split.driverPays ? 'mit' : 'nicht mit'}`)),
+      h('span', { class: 'chev' }, icon('chevron-right', { size: 18 }))),
     detailsCard(agg),
     valuesCard(entries, agg),
   );

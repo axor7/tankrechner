@@ -1,4 +1,5 @@
 // Kleine DOM- und Formatierungshelfer.
+import { icon } from './icons.js';
 
 export function h(tag, props = {}, ...children) {
   const el = document.createElement(tag);
@@ -73,7 +74,7 @@ export function chip(person, { active = true, partial = false, driver = false, o
     style: { '--pc': person.color },
     title: title || person.name,
     onclick: onClick,
-  }, driver ? h('span', { class: 'chip-wheel', 'aria-label': 'Fahrer' }, '🚗') : null, person.name);
+  }, driver ? h('span', { class: 'chip-wheel', title: 'Fahrer' }, icon('car', { size: 14, label: 'Fahrer' })) : null, person.name);
 }
 
 export function stat(label, value, sub) {

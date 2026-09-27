@@ -4,38 +4,30 @@ Eine Website für Fahrgemeinschaften: Strecke mit Zwischenstopps planen, aktuell
 
 ## Funktionen
 
-**1 · Strecke**
-- Start, beliebig viele Zwischenstopps und Ziel mit Adresssuche (Autovervollständigung) oder per Klick in die Karte
-- Marker ziehen, um Punkte zu verschieben; Klick auf die Route fügt einen Zwischenstopp ein (so lässt sich die Route „umbiegen“)
-- Alternative Routen (bei Start → Ziel ohne Zwischenstopp) direkt auf der Karte auswählbar
-- Rückfahrt über dieselbe Strecke, Kilometer und Fahrzeit je Teilstrecke
-- Ohne Karte: Kilometer auch manuell eingebbar
+Gestaltet nach Apples Human Interface Guidelines: Systemschrift, gruppierte Listen, Milchglas-Leisten, Hell/Dunkel automatisch.
+Auf dem Handy Tab-Leiste unten, auf Tablet/Computer Seitenleiste; die Karte lässt sich ein- und ausblenden.
 
-- **Adressen Personen zuordnen** (👤 unter jeder Adresse): Jeder zahlt auf dem Hinweg erst ab seiner Adresse und auf dem Rückweg nur bis dorthin. Fährt jemand an einem Tag nicht mit, wird seine Adresse ausgelassen und die Strecke für diese Fahrt neu berechnet.
-- **Reihenfolge der Rückfahrt** frei wählbar (wer wird zuerst abgesetzt?), eigene Rückroute orange gestrichelt auf der Karte
+**Übersicht** – was du noch zahlen musst bzw. bekommst, diese Woche, Kosten pro Fahrt, Spritpreis, beste Tankzeit, deine nächsten Fahrten; beim Einstieg eine Schritt-für-Schritt-Liste.
 
-**2 · Auto & Sprit**
-- Verbrauch (l/100 km) und Kraftstoff (E10, E5, Diesel, LPG, CNG), optional Zusatzkosten pro km (Verschleiß o. Ä.)
-- Live-Preise aller Tankstellen entlang der Route (Tankerkönig / Markttransparenzstelle), farbig auf der Karte
-- Preisquelle wählbar: günstigste an der Strecke, bestimmte Tankstelle oder manuell
-- **Beste Zeit zum Tanken**: typischer Tagesverlauf mit Empfehlung und Ersparnis pro Woche. Mit API-Key sammelt die Seite alle 15 Minuten eigene Messwerte deiner Tankstellen und kann daraus ein eigenes Profil zeigen.
+**Fahrten**
+- **Meine Tage**: für die nächsten 4 Wochen vorausschauend antippen, an welchen Tagen man mitfährt
+- Wochenplan mit Hin-/Rückfahrt, Personen per Tipp an- und abwählen, Fahrer pro Fahrt
+- **Aus Regelplan füllen** (feste Tage je Person), „Wie Vorwoche“; Tage in der Zukunft sind „geplant“ und werden erst ab dem Tag abgerechnet
+- Teilstrecken: automatisch aus den Adressen oder von Hand
 
-**3 · Fahrten**
-- Mitfahrer mit Farbe anlegen, Standard-Fahrer festlegen
-- Wochenplan (KW-Navigation): pro Tag Hin- und Rückfahrt, Personen per Tipp an- und abwählen
-- „Alle Mo–Fr eintragen“, „Wie Vorwoche“, Wochenende optional
-- **Teilstrecken**: z. B. steigt jemand erst am Zwischenstopp zu oder fährt nur hin, aber nicht zurück
-- Fahrer pro Fahrt wählbar (wenn ihr euch abwechselt)
-- Jede Woche merkt sich Strecke, Verbrauch und Preis → alte Wochen bleiben stabil abgerechnet
+**Abrechnung**
+- Offene Beträge über mehrere Wochen, bezahlt abhaken, Nachricht + PayPal-Link kopieren
+- Zeitraum Woche/Monat/alles/frei, Anteil pro Person, Ausgleich, alle Werte im Überblick, Nebenkosten an/aus
 
-**4 · Abrechnung**
-- Zeitraum: Woche, Monat, alles oder frei wählbar
-- Anteil pro Person, gefahrene km, wer wie viel getankt hat
-- Ausgleich: wer wem wie viel überweist (möglichst wenige Überweisungen)
-- Regeln: *nach Teilstrecken* (jede Teilstrecke wird nur unter den dort Mitfahrenden geteilt) oder *gleich pro Fahrt*; Fahrer zahlt mit oder nicht
-- Als Text kopieren (z. B. für WhatsApp), teilen, drucken; Detailansicht jeder Fahrt
-- **Bezahlen per PayPal**: PayPal.me-Namen bei den Mitfahrern hinterlegen – pro Zahlung gibt es eine fertige Nachricht (Betrag, Fahrten, km, PayPal-Link `paypal.me/name/12.34EUR`) und den PayPal-Link einzeln zum Kopieren. „Freunde & Familie“ wird in der Nachricht genannt; auswählen muss es der Zahlende in PayPal selbst.
-- **Offene Beträge**: alle noch nicht bezahlten Wochen pro Person; mehrere Wochen auswählen (z. B. wenn jemand eine Woche vergessen hat) → eine Nachricht mit Liste und Gesamtbetrag. Bezahltes abhaken (auch rückgängig); ändert sich eine Woche nachträglich, bleibt nur die Differenz offen.
+**Strecke**
+- Start, Zwischenstopps, Ziel mit Adresssuche oder per Tipp in die Karte; Marker ziehen, auf die Route tippen für Zwischenstopps
+- Adressen Personen zuordnen (zahlen hin ab / zurück bis zu ihrer Adresse), eigene Reihenfolge für die Rückfahrt
+- Spritpreis & Tankzeit: Live-Preise an der Strecke (Tankerkönig), beste Tankzeit
+
+**Einstellungen**
+- Fahrgemeinschaft & Konto, **„Das bin ich“**
+- **Mitfahrer**: aktiv/inaktiv (statt löschen), feste Tage (Regelplan), PayPal, Farbe
+- Auto (Verbrauch, Kraftstoff, Nebenkosten pro km), Aufteilungsregel, Daten (Beispiel, Export/Import, Zurücksetzen)
 
 ## Fahrgemeinschaft mit Login (optional)
 
@@ -43,8 +35,8 @@ Eine Website für Fahrgemeinschaften: Strecke mit Zwischenstopps planen, aktuell
 
 - Konto mit E-Mail und Passwort anlegen
 - **Fahrgemeinschaft anlegen** (die bisherigen eigenen Daten können mitgenommen werden) und den **Einladungslink** an die Kollegen schicken
-- Jeder wählt „Wer bist du?“ – dann zeigt die Abrechnung „Du musst noch … zahlen“ und jeder kann selbst abhaken, was er bezahlt hat (mit „abgehakt von …“)
-- Änderungen werden sofort gespeichert und bei allen live aktualisiert; ändern zwei gleichzeitig, gehen beide Änderungen nicht verloren
+- Jeder **beansprucht seinen Namen** („Wer bist du?“ auf der Übersicht bzw. „Das bin ich“) – ein Name kann nur einem Konto gehören. Dann zeigt die Übersicht „Du musst noch … zahlen“ und jeder kann selbst abhaken, was er bezahlt hat (mit „abgehakt von …“) und seine Tage planen
+- Änderungen werden sofort gespeichert und bei allen live aktualisiert (ohne Live-Verbindung spätestens nach ~15 s); ändern zwei gleichzeitig, gehen beide Änderungen nicht verloren
 - „Nur lokal arbeiten“ schaltet zurück auf die eigenen Daten dieses Geräts
 
 Technik: [Supabase](https://supabase.com) (Anmeldung + Datenbank). Einrichtung einmalig: `supabase/setup.sql` im SQL Editor ausführen und unter Authentication → Email „Confirm email“ ausschalten
@@ -100,22 +92,27 @@ Testet die Rechenlogik (Kosten, Teilstrecken-Aufteilung, Ausgleichszahlungen, Ka
 ## Aufbau
 
 ```
-index.html          Seite
-css/style.css       Gestaltung (hell/dunkel, Handy & Desktop)
-js/app.js           Start, Tabs, Strecken-Tab, Karten-Anbindung
-js/map.js           Leaflet-Karte (Marker, Route, Tankstellen)
-js/api.js           Photon, OSRM, Tankerkönig
-js/calc.js          Rechenlogik (ohne DOM, getestet)
-js/fueltimes.js     Beste Tankzeit
-js/state.js         Zustand & Speicherung
-js/tab-*.js         Die Tabs „Auto & Sprit“, „Fahrten“, „Abrechnung“
-js/example.js       Beispieldaten
-js/version.js       Versionsanzeige & Hinweis auf neue Version
-js/pay.js           PayPal.me-Links und Nachrichtentexte
-js/debts.js         Offene Beträge je Woche, bezahlt abhaken
+index.html          Seite (Seitenleiste, Titelzeile, Ansicht, Karte, Tab-Leiste)
+css/style.css       Gestaltung im Apple-Stil (hell/dunkel, Handy/Tablet/Computer)
+js/app.js           Start, Navigation, Karte, Strecken-Ansicht, Routenberechnung
+js/view-home.js     Übersicht
+js/tab-trips.js     Fahrten: Wochenplan, Regelplan, Meine Tage
+js/tab-bill.js      Abrechnung, offene Beträge
+js/tab-fuel.js      Auto, Spritpreis, Tankstellen, beste Tankzeit
+js/view-settings.js Einstellungen, Mitfahrer
 js/account.js       Konto & Fahrgemeinschaft (Oberfläche)
 js/cloud.js         Supabase: Anmeldung, Gruppen, Speichern, Live-Updates
 js/sync.js          Synchronisation mit Konfliktbehandlung (getestet)
-supabase/setup.sql  Datenbank-Einrichtung (Tabellen, Zugriffsregeln)
+js/calc.js          Rechenlogik (ohne DOM, getestet)
+js/plan.js          Aktiv/inaktiv, Regelplan (getestet)
+js/debts.js         Offene Beträge je Woche (getestet)
+js/pay.js           PayPal.me-Links und Nachrichten (getestet)
+js/fueltimes.js     Beste Tankzeit
+js/map.js           Leaflet-Karte
+js/api.js           Photon, OSRM, Tankerkönig
+js/state.js         Zustand & Speicherung
+js/icons.js         Symbole (Lucide, ISC-Lizenz)
+js/ui.js, version.js, example.js
+supabase/setup.sql  Datenbank-Einrichtung
 tests/              Tests (node --test)
 ```

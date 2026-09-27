@@ -127,11 +127,11 @@ export const backend = {
   },
 };
 
-/** Live-Updates: ruft fn(neueVersion) auf, wenn jemand anderes speichert. Gibt eine Abmelde-Funktion zurück. */
-export async function watchGroup(groupId, fn) {
+/** Live-Updates: ruft fn(neueVersion) auf, wenn jemand anderes speichert; onLive(true/false) meldet, ob die Verbindung steht. Gibt eine Abmelde-Funktion zurück. */
+export async function watchGroup(groupId, fn, onLive = () => {}) {
   const sb = await client();
   const channel = sb.channel(`group-${groupId}`)
     .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'groups', filter: `id=eq.${groupId}` }, (p) => fn(p.new?.version ?? Infinity))
-    .subscribe();
+    .subscribe((status) => onLive(status === 'SUBSCRIBED'));
   return () => sb.removeChannel(channel);
 }

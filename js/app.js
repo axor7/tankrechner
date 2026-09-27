@@ -1,21 +1,26 @@
-// Einstiegspunkt: Layout, Tabs, Strecken-Tab und Karten-Anbindung.
-import { state, update, subscribe, validStops, uid, effectivePrice, currentLegs, replaceState, defaultState, returnStops, returnOrderIds, isCustomReturn, makeSnapshot, stopName } from './state.js';
+// Einstiegspunkt: App-Gerüst (Navigation, Karte), Strecken-Ansicht und Routenberechnung.
+import { state, update, subscribe, validStops, uid, currentLegs, replaceState, defaultState, returnStops, returnOrderIds, isCustomReturn, makeSnapshot, stopName } from './state.js';
 import { searchPlaces, reverseGeocode, fetchRoute } from './api.js';
 import { MapView } from './map.js';
-import { legCost, FUELS, DIRECTIONS, hasOwners, plannedStops, routeKey } from './calc.js';
-import { h, stat, chip, fmtEuro, fmtKm, fmtDuration, fmtPrice, debounce, toast } from './ui.js';
-import { renderFuelTab, stationSelected, startAutoRefresh } from './tab-fuel.js';
+import { FUELS, DIRECTIONS, hasOwners, plannedStops, routeKey } from './calc.js';
+import { h, stat, chip, fmtKm, fmtDuration, debounce, toast } from './ui.js';
+import { icon } from './icons.js';
+import { priceCard, timeCard, costCard, stationSelected, startAutoRefresh } from './tab-fuel.js';
 import { renderTripsTab } from './tab-trips.js';
-import { renderBillTab } from './tab-bill.js';
+import { renderBillTab, openBadgeCount } from './tab-bill.js';
+import { renderHome } from './view-home.js';
+import { renderSettings } from './view-settings.js';
 import { loadExample } from './example.js';
 import { setupVersion } from './version.js';
-import { initAccount, inGroup } from './account.js';
+import { initAccount, inGroup, openAccount } from './account.js';
+import { isActive } from './plan.js';
 
-const TABS = [
-  { id: 'route', icon: '🗺️', label: 'Strecke' },
-  { id: 'fuel', icon: '⛽', label: 'Auto & Sprit' },
-  { id: 'trips', icon: '👥', label: 'Fahrten' },
-  { id: 'bill', icon: '🧾', label: 'Abrechnung' },
+const VIEWS = [
+  { id: 'home', label: 'Übersicht', icon: 'house', color: 'blue' },
+  { id: 'trips', label: 'Fahrten', icon: 'calendar-days', color: 'green' },
+  { id: 'bill', label: 'Abrechnung', icon: 'wallet', color: 'orange' },
+  { id: 'route', label: 'Strecke', icon: 'route', color: 'indigo' },
+  { id: 'settings', label: 'Einstellungen', icon: 'settings', color: 'gray' },
 ];
 
 const $ = (sel) => document.querySelector(sel);
@@ -235,25 +240,26 @@ function stopRow(stop, i, n) {
         () => toast('Standort konnte nicht ermittelt werden', 'error'),
       );
     },
-  }, '📍') : null;
+  }, icon('locate-fixed', { size: 18 })) : null;
 
   const owners = stop.owners || [];
   const toggleOwner = (pid) => update((s) => {
     const st = s.stops.find((x) => x.id === stop.id);
     st.owners = (st.owners || []).includes(pid) ? st.owners.filter((x) => x !== pid) : [...(st.owners || []), pid];
   });
+  const ownerCandidates = state.persons.filter((p) => isActive(p) || owners.includes(p.id));
   const ownerLine = state.persons.length > 1 ? h('div', { class: 'owner-line' },
-    h('span', { class: 'owner-label', title: 'Wessen Adresse ist das? Diese Person steigt hier zu bzw. wird hier abgesetzt.' }, '👤'),
-    state.persons.map((p) => chip(p, { active: owners.includes(p.id), onClick: () => toggleOwner(p.id), title: `${p.name}: ${owners.includes(p.id) ? 'wohnt hier – antippen zum Entfernen' : 'hier zuordnen'}` })),
+    h('span', { class: 'owner-label', title: 'Wessen Adresse ist das? Diese Person steigt hier zu bzw. wird hier abgesetzt.' }, icon('user', { size: 15 })),
+    ownerCandidates.map((p) => chip(p, { active: owners.includes(p.id), onClick: () => toggleOwner(p.id), title: `${p.name}: ${owners.includes(p.id) ? 'wohnt hier – antippen zum Entfernen' : 'hier zuordnen'}` })),
   ) : null;
 
   return h('div', { class: 'stop-block' }, h('div', { class: `stop-row ${stop.lat == null ? 'empty' : ''}` },
     h('span', { class: `pin-badge pin-${kind}` }, letter),
     h('div', { class: 'stop-input' }, input, list),
     geoBtn,
-    h('button', { class: 'icon-btn', title: 'Nach oben', type: 'button', disabled: i === 0, onclick: () => move(-1) }, '↑'),
-    h('button', { class: 'icon-btn', title: 'Nach unten', type: 'button', disabled: i === n - 1, onclick: () => move(1) }, '↓'),
-    h('button', { class: 'icon-btn danger', title: 'Entfernen', type: 'button', onclick: () => removeStop(stop.id) }, '✕'),
+    h('button', { class: 'icon-btn', title: 'Nach oben', type: 'button', disabled: i === 0, onclick: () => move(-1) }, icon('arrow-up', { size: 18 })),
+    h('button', { class: 'icon-btn', title: 'Nach unten', type: 'button', disabled: i === n - 1, onclick: () => move(1) }, icon('arrow-down', { size: 18 })),
+    h('button', { class: 'icon-btn danger', title: 'Entfernen', type: 'button', onclick: () => removeStop(stop.id) }, icon('x', { size: 18 })),
   ), ownerLine);
 }
 
@@ -274,7 +280,7 @@ function returnCard() {
   const back = state.returnRoute;
   const custom = isCustomReturn();
   return h('section', { class: 'card' },
-    h('h2', {}, 'Rückfahrt – Reihenfolge'),
+    h('h2', {}, 'Rückfahrt'),
     h('p', { class: 'hint' }, 'In welcher Reihenfolge wird auf dem Rückweg abgesetzt? Das Ziel des Hinwegs bleibt der Startpunkt.'),
     h('ol', { class: 'return-order' }, order.map((id, k) => {
       const { stop, i } = byId.get(id);
@@ -285,16 +291,16 @@ function returnCard() {
         h('span', { class: 'ret-num' }, `${k + 1}.`),
         h('span', { class: `pin-badge pin-${kind}` }, letter),
         h('span', { class: 'ret-name' }, stopName(stop, i, n), who ? h('small', { class: 'muted' }, ` · ${who}`) : null),
-        h('button', { class: 'icon-btn', type: 'button', title: 'Früher anfahren', disabled: k <= 1, onclick: () => move(k, -1) }, '↑'),
-        h('button', { class: 'icon-btn', type: 'button', title: 'Später anfahren', disabled: k === 0 || k === order.length - 1, onclick: () => move(k, 1) }, '↓'),
+        h('button', { class: 'icon-btn', type: 'button', title: 'Früher anfahren', disabled: k <= 1, onclick: () => move(k, -1) }, icon('arrow-up', { size: 18 })),
+        h('button', { class: 'icon-btn', type: 'button', title: 'Später anfahren', disabled: k === 0 || k === order.length - 1, onclick: () => move(k, 1) }, icon('arrow-down', { size: 18 })),
       );
     })),
     custom && back ? h('div', { class: 'muted small' }, `Rückweg: ${fmtKm(back.distance / 1000)} · ${fmtDuration(back.duration)} (auf der Karte orange gestrichelt)`) : null,
-    custom ? h('button', { type: 'button', class: 'btn btn-small btn-ghost', onclick: () => { update((s) => { s.returnOrder = null; }); recalcReturn(); } }, '↺ Wie Hinweg (umgekehrt)') : null,
+    custom ? h('button', { type: 'button', class: 'btn btn-small', onclick: () => { update((s) => { s.returnOrder = null; }); recalcReturn(); } }, icon('rotate-ccw', { size: 15 }), 'Wie Hinweg (umgekehrt)') : null,
   );
 }
 
-function renderRouteTab(el) {
+function routeView(el) {
   const n = state.stops.length;
   const legs = currentLegs();
   const stops = validStops();
@@ -303,27 +309,24 @@ function renderRouteTab(el) {
   el.append(
     h('section', { class: 'card' },
       h('h2', {}, 'Deine Strecke'),
-      h('p', { class: 'hint' }, 'Gib Start, Zwischenstopps (z. B. wo jemand zusteigt) und Ziel ein – oder klicke direkt in die Karte.'),
-      h('div', { class: 'stops' }, state.stops.map((s, i) => stopRow(s, i, n))),
-      h('div', { class: 'row gap' },
+      h('p', { class: 'hint' }, 'Start, Zwischenstopps und Ziel eingeben – oder direkt in die Karte tippen.'),
+      h('div', { class: 'stops' }, state.stops.map((x, i) => stopRow(x, i, n))),
+      h('div', { class: 'row gap wrap' },
         h('button', {
-          class: 'btn', type: 'button',
+          class: 'btn btn-small', type: 'button',
           onclick: () => { update((s) => s.stops.splice(s.stops.length - 1, 0, { id: uid(), label: '', lat: null, lng: null })); },
-        }, '＋ Zwischenstopp'),
+        }, icon('plus', { size: 16 }), 'Zwischenstopp'),
         h('button', {
-          class: 'btn btn-ghost', type: 'button', title: 'Start und Ziel tauschen',
-          disabled: n < 2,
+          class: 'btn btn-small', type: 'button', title: 'Start und Ziel tauschen', disabled: n < 2,
           onclick: () => { update((s) => s.stops.reverse()); recalcRoute(); },
-        }, '⇅ Umdrehen'),
+        }, icon('arrow-up-down', { size: 16 }), 'Umdrehen'),
       ),
-      h('label', { class: 'check' },
-        h('input', { type: 'checkbox', checked: state.roundTrip, onchange: (e) => { update((s) => { s.roundTrip = e.target.checked; }); recalcReturn(); } }),
-        ' Mit Rückfahrt'),
-      state.persons.length > 1 ? h('p', { class: 'hint small' }, '👤 Tippe unter einer Adresse auf die Personen, die dort wohnen bzw. zusteigen. Sie zahlen dann auf dem Hinweg erst ab ihrer Adresse und auf dem Rückweg nur bis dorthin. Fährt jemand an einem Tag nicht mit, wird seine Adresse ausgelassen und die Strecke für diese Fahrt neu berechnet.') : null,
+      h('label', { class: 'switch-row' },
+        h('span', {}, 'Mit Rückfahrt'),
+        h('input', { type: 'checkbox', class: 'switch', checked: state.roundTrip, onchange: (e) => { update((s) => { s.roundTrip = e.target.checked; }); recalcReturn(); } })),
+      state.persons.length > 1 ? h('p', { class: 'hint small' }, 'Tippe unter einer Adresse auf die Personen, die dort wohnen bzw. zusteigen. Sie zahlen dann auf dem Hinweg erst ab ihrer Adresse und auf dem Rückweg nur bis dorthin. Wer an einem Tag nicht mitfährt, wird nicht angefahren.') : null,
     ),
   );
-  const rc = returnCard();
-  if (rc) el.append(rc);
 
   if (route && legs.length) {
     const total = legs.reduce((a, l) => a + l.km, 0);
@@ -331,7 +334,7 @@ function renderRouteTab(el) {
       h('div', { class: 'stats' },
         stat('Einfache Strecke', fmtKm(total)),
         stat('Fahrzeit', fmtDuration(route.duration)),
-        stat(state.roundTrip ? 'Hin & zurück' : 'Teilstrecken', state.roundTrip ? fmtKm(total * 2) : String(legs.length)),
+        state.roundTrip ? stat('Hin & zurück', fmtKm(total * 2)) : null,
       ),
       legs.length > 1 ? h('ol', { class: 'legs' }, legs.map((l, i) => h('li', {},
         h('span', {}, `${l.from} → ${l.to}`),
@@ -339,54 +342,53 @@ function renderRouteTab(el) {
       state.alternatives.length > 1 ? h('div', { class: 'alts' },
         h('h3', {}, 'Alternative Routen'),
         state.alternatives.map((a, i) => h('button', {
-          type: 'button',
-          class: `alt ${i === (state.selectedAlt || 0) ? 'selected' : ''}`,
+          type: 'button', class: `alt ${i === (state.selectedAlt || 0) ? 'selected' : ''}`,
           onclick: () => mapHandlers.onSelectAlternative(i),
-        }, h('strong', {}, `Route ${i + 1}`), ` ${fmtKm(a.distance / 1000)} · ${fmtDuration(a.duration)}`))) : null,
+        }, h('strong', {}, `Route ${i + 1}`), ` · ${fmtKm(a.distance / 1000)} · ${fmtDuration(a.duration)}`))) : null,
     ));
   } else if (stops.length < 2) {
     el.append(h('section', { class: 'card' },
-      h('h3', {}, 'Ohne Karte?'),
-      h('p', { class: 'hint' }, 'Du kannst die einfache Strecke auch direkt in Kilometern angeben.'),
-      h('label', { class: 'field' }, 'Einfache Strecke (km)',
+      h('h2', {}, 'Ohne Karte'),
+      h('label', { class: 'field' }, 'Einfache Strecke in km',
         h('input', {
-          type: 'number', min: 0, step: 0.1, value: state.manualKm ?? '',
+          type: 'number', min: 0, step: 0.1, inputmode: 'decimal', value: state.manualKm ?? '',
           onchange: (e) => update((s) => { s.manualKm = e.target.value === '' ? null : Number(e.target.value); }),
         })),
     ));
   }
 
+  const rc = returnCard();
+  if (rc) el.append(rc);
+
   el.append(h('section', { class: 'card tips' },
-    h('h3', {}, 'So bearbeitest du die Route'),
+    h('h2', {}, 'Tipps zur Karte'),
     h('ul', {},
-      h('li', {}, h('strong', {}, 'Klick in die Karte'), ': Start, Zwischenstopp oder Ziel setzen'),
+      h('li', {}, h('strong', {}, 'In die Karte tippen'), ': Start, Zwischenstopp oder Ziel setzen'),
       h('li', {}, h('strong', {}, 'Marker ziehen'), ': Punkt verschieben'),
-      h('li', {}, h('strong', {}, 'Klick auf die blaue Linie'), ': Zwischenstopp einfügen und dann dorthin ziehen, wo die Route langgehen soll'),
+      h('li', {}, h('strong', {}, 'Auf die blaue Linie tippen'), ': Zwischenstopp einfügen und dorthin ziehen, wo die Route langgehen soll'),
       h('li', {}, h('strong', {}, 'Rechtsklick auf Marker'), ': Punkt entfernen'),
-      h('li', {}, h('strong', {}, 'Graue Linie'), ': alternative Route auswählen'),
     ),
   ));
 }
 
-// ---------- Kopfzeile ----------
-
-function renderSummary() {
-  const legs = currentLegs();
-  const km = legs.reduce((a, l) => a + l.km, 0);
-  const price = effectivePrice();
-  const c = legCost(km, { consumption: state.car.consumption, price, extraPerKm: state.car.extraPerKm });
-  $('#summary').replaceChildren(
-    h('div', { class: 'pill' }, '🛣️ ', km ? fmtKm(km) : 'keine Strecke'),
-    h('div', { class: 'pill' }, '⛽ ', `${FUELS[state.car.fuel]?.label || ''} ${fmtPrice(price)}`),
-    h('div', { class: 'pill strong' }, '💶 ', km ? `${fmtEuro(state.split.includeExtra === false ? c.fuel : c.total)} pro Fahrt` : '–'),
-  );
+function renderRouteView(el) {
+  const sub = state.ui.routeSub === 'fuel' ? 'fuel' : 'route';
+  el.append(h('div', { class: 'segmented' },
+    h('button', { type: 'button', class: sub === 'route' ? 'active' : '', onclick: () => update((s) => { s.ui.routeSub = 'route'; }) }, 'Route'),
+    h('button', { type: 'button', class: sub === 'fuel' ? 'active' : '', onclick: () => update((s) => { s.ui.routeSub = 'fuel'; }) }, 'Spritpreis & Tankzeit'),
+  ));
+  if (sub === 'route') routeView(el);
+  else el.append(...[priceCard(map), costCard(), timeCard()].filter(Boolean));
+  if (!state.ui.showMap) {
+    el.append(h('button', { type: 'button', class: 'btn', onclick: toggleMap }, icon('map', { size: 18 }), 'Karte einblenden'));
+  }
 }
 
-// ---------- Rendering ----------
+// ---------- Karte ----------
 
 let mapKeys = {};
 function syncMap() {
-  const stopsKey = JSON.stringify(state.stops.map((s) => [s.id, s.lat, s.lng, s.label]));
+  const stopsKey = JSON.stringify(state.stops.map((x) => [x.id, x.lat, x.lng, x.label]));
   if (stopsKey !== mapKeys.stops) { map.setStops(state.stops); mapKeys.stops = stopsKey; }
   const rKey = [state.route?.distance, state.route?.coords?.length, state.alternatives.length, state.selectedAlt, state.returnRoute?.distance, state.roundTrip].join('|');
   if (state.route?.distance !== mapKeys.routeDist) {
@@ -406,8 +408,42 @@ function syncMap() {
   }
 }
 
+function toggleMap() {
+  update((s) => { s.ui.showMap = !s.ui.showMap; });
+  map.invalidate();
+  if (state.ui.showMap) setTimeout(() => map.fit(state.stops, state.route), 80);
+}
+
+// ---------- Navigation ----------
+
+function go(view) {
+  update((s) => { s.ui.tab = view; });
+  window.scrollTo({ top: 0 });
+  document.querySelector('.main').scrollTop = 0;
+  map.invalidate();
+}
+
+function renderNav() {
+  const cur = state.ui.tab;
+  const badge = openBadgeCount();
+  $('#nav-side').replaceChildren(...VIEWS.map((v) => h('button', {
+    type: 'button', class: `nav-item ${v.id === cur ? 'active' : ''}`, 'aria-current': v.id === cur ? 'page' : null, onclick: () => go(v.id),
+  }, h('span', { class: `sq sq-${v.color}` }, icon(v.icon, { size: 17 })), h('span', {}, v.label),
+  v.id === 'bill' && badge ? h('span', { class: 'badge' }, String(badge)) : null)));
+  $('#nav-tabs').replaceChildren(...VIEWS.map((v) => h('button', {
+    type: 'button', class: `tab-item ${v.id === cur ? 'active' : ''}`, 'aria-current': v.id === cur ? 'page' : null, onclick: () => go(v.id),
+  }, icon(v.icon, { size: 24 }), h('span', {}, v.label === 'Einstellungen' ? 'Mehr' : v.label),
+  v.id === 'bill' && badge ? h('span', { class: 'badge' }, String(badge)) : null)));
+  const mapBtn = $('#btn-map');
+  mapBtn.replaceChildren(icon(state.ui.showMap ? 'panel-right-close' : 'map', { size: 19 }));
+  mapBtn.classList.toggle('on', !!state.ui.showMap);
+  mapBtn.title = state.ui.showMap ? 'Karte ausblenden' : 'Karte einblenden';
+}
+
+// ---------- Rendering ----------
+
 // Neu zeichnen erst nach einem laufenden Klick: Ein Eingabefeld löst beim Verlassen "change" aus –
-// würde das Panel sofort ersetzt, ginge der Klick auf den Button verloren.
+// würde die Ansicht sofort ersetzt, ginge der Klick auf den Button verloren.
 let pointerDown = false;
 let pending = false;
 let rendering = false;
@@ -425,42 +461,53 @@ function releasePointer() {
   if (pending) setTimeout(requestRender, 0);
 }
 
-function render() {
-  const tab = state.ui.tab;
-  document.body.dataset.tab = tab;
-  $('#tabs').replaceChildren(...TABS.map((t, i) => h('button', {
-    type: 'button', class: `tab ${t.id === tab ? 'active' : ''}`, role: 'tab', 'aria-selected': String(t.id === tab),
-    onclick: () => { update((s) => { s.ui.tab = t.id; }); $('#panel').scrollTop = 0; map.invalidate(); },
-  }, h('span', { class: 'tab-num' }, String(i + 1)), h('span', { class: 'tab-icon' }, t.icon), h('span', { class: 'tab-label' }, t.label))));
+const ctx = () => ({ map, go, toggleMap, recalcRoute, data: dataActions, openAccount });
 
-  const panel = $('#panel-content');
-  const scroll = $('#panel').scrollTop;
+function render() {
+  if (!VIEWS.some((v) => v.id === state.ui.tab)) state.ui.tab = state.ui.tab === 'fuel' ? 'route' : 'home';
+  const view = state.ui.tab;
+  document.body.dataset.view = view;
+  document.body.classList.toggle('map-on', !!state.ui.showMap);
+  $('#view-title').textContent = VIEWS.find((v) => v.id === view).label;
+  renderNav();
+
+  const el = $('#view');
   const focusedId = document.activeElement?.dataset?.focusKey;
-  panel.replaceChildren();
-  if (tab === 'route') renderRouteTab(panel);
-  if (tab === 'fuel') renderFuelTab(panel, { map });
-  if (tab === 'trips') renderTripsTab(panel);
-  if (tab === 'bill') renderBillTab(panel);
-  $('#panel').scrollTop = scroll;
-  if (focusedId) panel.querySelector(`[data-focus-key="${focusedId}"]`)?.focus();
-  renderSummary();
+  el.replaceChildren();
+  if (view === 'home') renderHome(el, ctx());
+  if (view === 'trips') renderTripsTab(el, ctx());
+  if (view === 'bill') renderBillTab(el, ctx());
+  if (view === 'route') renderRouteView(el);
+  if (view === 'settings') renderSettings(el, ctx());
+  if (focusedId) el.querySelector(`[data-focus-key="${focusedId}"]`)?.focus();
   syncMap();
   ensureRoutes();
 }
 
-// ---------- Menü: Export / Import / Beispiel ----------
+// ---------- Daten: Export / Import / Beispiel / Zurücksetzen ----------
 
-function setupMenu() {
-  const menu = $('.menu');
-  menu.querySelectorAll('.menu-list button').forEach((b) => b.addEventListener('click', () => { menu.open = false; }));
-  document.addEventListener('click', (e) => { if (!menu.contains(e.target)) menu.open = false; });
-  $('#btn-export').onclick = () => {
+const dataActions = {
+  exportData() {
     const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' });
     const a = h('a', { href: URL.createObjectURL(blob), download: `tankrechner-${new Date().toISOString().slice(0, 10)}.json` });
     a.click();
     URL.revokeObjectURL(a.href);
-  };
-  $('#btn-import').onclick = () => $('#file-import').click();
+  },
+  importData() { $('#file-import').click(); },
+  example() {
+    if (!confirm(inGroup() ? 'Beispieldaten laden? Das ersetzt die Daten der GANZEN Fahrgemeinschaft – für alle Mitglieder!' : 'Beispieldaten laden? Deine aktuellen Daten werden ersetzt (vorher ggf. exportieren).')) return;
+    replaceState({ ...loadExample(), ui: { ...state.ui, tab: 'home' } });
+    mapKeys = {};
+    recalcRoute();
+  },
+  reset() {
+    if (!confirm(inGroup() ? 'Wirklich alles löschen? Das löscht die Daten der GANZEN Fahrgemeinschaft – für alle Mitglieder!' : 'Wirklich alles löschen?')) return;
+    replaceState({ ...defaultState(), ui: { ...state.ui, tab: 'home' } });
+    mapKeys = {};
+  },
+};
+
+function setupImport() {
   $('#file-import').onchange = async (e) => {
     const f = e.target.files[0];
     if (!f) return;
@@ -473,33 +520,28 @@ function setupMenu() {
     } catch { toast('Datei konnte nicht gelesen werden', 'error'); }
     e.target.value = '';
   };
-  $('#btn-example').onclick = async () => {
-    if (!confirm(inGroup() ? 'Beispieldaten laden? Das ersetzt die Daten der GANZEN Fahrgemeinschaft – für alle Mitglieder!' : 'Beispieldaten laden? Deine aktuellen Daten werden ersetzt (vorher ggf. exportieren).')) return;
-    replaceState(loadExample());
-    mapKeys = {};
-    recalcRoute();
-  };
-  $('#btn-reset').onclick = () => {
-    if (!confirm(inGroup() ? 'Wirklich alles löschen? Das löscht die Daten der GANZEN Fahrgemeinschaft – für alle Mitglieder!' : 'Wirklich alles löschen?')) return;
-    replaceState(defaultState());
-    mapKeys = {};
-  };
 }
 
 function init() {
   setupVersion(); // zuerst, damit die Version auch sichtbar ist, falls danach etwas schiefgeht
+  if (state.ui.showMap === undefined) state.ui.showMap = window.innerWidth >= 1024;
   map = new MapView($('#map'), mapHandlers);
   subscribe(requestRender);
   document.addEventListener('pointerdown', () => { pointerDown = true; }, true);
   document.addEventListener('pointerup', releasePointer, true);
   document.addEventListener('pointercancel', releasePointer, true);
-  setupMenu();
+  $('#btn-map').onclick = toggleMap;
+  document.addEventListener('account-changed', requestRender);
+  setupImport();
   initAccount();
   requestRender();
   map.fit(state.stops, state.route);
   if (!state.route && validStops().length >= 2) recalcRoute();
   startAutoRefresh();
   window.addEventListener('resize', () => map.invalidate());
+  const onScroll = () => document.body.classList.toggle('scrolled', (document.querySelector('.main').scrollTop || window.scrollY) > 8);
+  window.addEventListener('scroll', onScroll, { passive: true });
+  document.querySelector('.main').addEventListener('scroll', onScroll, { passive: true });
 }
 
 init();

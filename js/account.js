@@ -1,5 +1,6 @@
 // Konto & Fahrgemeinschaft: Anmelden, Gruppe anlegen/beitreten, einladen, synchronisieren.
 import { state, update, sharedData, applyRemote, onChange, uid, COLORS, defaultState } from './state.js';
+import { icon } from './icons.js';
 import * as cloud from './cloud.js';
 import { createSync } from './sync.js';
 import { h, toast } from './ui.js';
@@ -21,12 +22,13 @@ let authMode = 'login';
 let error = '';
 let busy = false;
 let pendingJoin = null;
+let live = false; // steht die Live-Verbindung?
 
 const sync = createSync({
   backend: cloud.backend,
   getShared: () => sharedData(state),
   applyRemote,
-  onStatus: (s) => { syncStatus = s; renderButton(); },
+  onStatus: (s) => { syncStatus = s; renderButton(false); },
 });
 
 // ---------- Für andere Module ----------
@@ -34,6 +36,28 @@ const sync = createSync({
 export const inGroup = () => !!(user && meta.groupId);
 export const myPersonId = () => (inGroup() ? meta.personId || null : null);
 export const myName = () => cloud.userName(user);
+export const isLoggedIn = () => !!user;
+export const groupName = () => (inGroup() ? meta.groupName : null);
+export const syncState = () => syncStatus;
+
+/** Wer hat welche Person beansprucht? Map personId → Anzeigename (nur in einer Fahrgemeinschaft). */
+export function claims() {
+  const m = new Map();
+  if (inGroup()) for (const x of memberList) if (x.person_id) m.set(x.person_id, { name: x.display_name || 'Jemand', me: x.user_id === user?.id });
+  return m;
+}
+
+/** Diese Person als „Das bin ich“ beanspruchen (null = Zuordnung lösen). */
+export async function claimPerson(personId) {
+  if (!inGroup()) { update((s) => { s.ui.me = personId; }); return; }
+  const taken = claims().get(personId);
+  if (personId && taken && !taken.me) throw new Error(`${taken.name} hat diese Person schon beansprucht.`);
+  await cloud.setMyPerson(meta.groupId, personId);
+  meta.personId = personId;
+  store(META_KEY, meta);
+  memberList = await cloud.members(meta.groupId);
+  update(() => {});
+}
 
 // ---------- Gruppe aktivieren / verlassen ----------
 
@@ -43,7 +67,7 @@ async function activate(groupId, groupName, personId) {
   meta = { groupId, groupName, personId: personId ?? null };
   store(META_KEY, meta);
   await sync.start(groupId);
-  unwatch = await cloud.watchGroup(groupId, (v) => sync.remoteChanged(v));
+  unwatch = await cloud.watchGroup(groupId, (v) => sync.remoteChanged(v), (ok) => { live = ok; });
   refreshGroupDetails();
   renderButton();
 }
@@ -77,14 +101,18 @@ async function refreshGroupDetails() {
 
 // ---------- Kopfzeilen-Knopf ----------
 
-function renderButton() {
-  const btn = document.getElementById('btn-account');
-  if (!btn) return;
-  const dot = { synced: '🟢', saving: '🟡', offline: '🔴' }[syncStatus] || '';
-  btn.replaceChildren(...(inGroup()
-    ? [h('span', { class: 'acc-status', title: { synced: 'Gespeichert', saving: 'Wird gespeichert …', offline: 'Offline – wird später gespeichert' }[syncStatus] }, dot), h('span', { class: 'acc-label' }, meta.groupName || 'Fahrgemeinschaft')]
-    : [h('span', {}, '👤'), h('span', { class: 'acc-label' }, user ? cloud.userName(user) : 'Anmelden')]));
-  btn.classList.toggle('in-group', inGroup());
+function renderButton(notify = true) {
+  const title = { synced: 'Gespeichert', saving: 'Wird gespeichert …', offline: 'Offline – wird später gespeichert' }[syncStatus];
+  for (const btn of [document.getElementById('btn-account'), document.getElementById('btn-account-mobile')]) {
+    if (!btn) continue;
+    btn.replaceChildren(...(inGroup()
+      ? [h('span', { class: `acc-status ${syncStatus}`, title }), h('span', { class: 'acc-label' }, meta.groupName || 'Fahrgemeinschaft')]
+      : [icon(user ? 'circle-user' : 'user', { size: 18 }), h('span', { class: 'acc-label' }, user ? cloud.userName(user) : 'Anmelden')]));
+    btn.classList.toggle('in-group', inGroup());
+    btn.title = inGroup() ? `${meta.groupName} – ${title}` : 'Konto & Fahrgemeinschaft';
+  }
+  // Übrige Ansicht (z. B. Einstellungen, Übersicht) aktualisieren – nicht bei reinen Speicherstatus-Wechseln (sonst verliert man beim Tippen den Fokus)
+  if (notify) document.dispatchEvent(new CustomEvent('account-changed'));
 }
 
 // ---------- Dialog ----------
@@ -152,10 +180,10 @@ function inviteLink() {
 
 function groupView() {
   const link = inviteLink();
-  const personOptions = [h('option', { value: '' }, '– bitte auswählen –'), ...state.persons.map((p) => h('option', { value: p.id, selected: p.id === meta.personId }, p.name)), h('option', { value: '__new' }, `➕ Mich als neue Person anlegen („${cloud.userName(user)}“)`)];
+  const personOptions = [h('option', { value: '' }, '– bitte auswählen –'), ...state.persons.map((p) => h('option', { value: p.id, selected: p.id === meta.personId }, p.name)), h('option', { value: '__new' }, `Mich als neue Person anlegen („${cloud.userName(user)}“)`)];
   const nameOf = (pid) => state.persons.find((p) => p.id === pid)?.name;
   return h('section', { class: 'acc-group' },
-    h('div', { class: 'row between' }, h('h3', {}, `🚗 ${meta.groupName || 'Fahrgemeinschaft'}`), h('span', { class: 'muted small' }, { synced: '🟢 gespeichert', saving: '🟡 speichert …', offline: '🔴 offline' }[syncStatus])),
+    h('div', { class: 'row between' }, h('h3', {}, meta.groupName || 'Fahrgemeinschaft'), h('span', { class: 'muted small row gap', style: { gap: '.35rem' } }, h('span', { class: `acc-status ${syncStatus}` }), { synced: 'gespeichert', saving: 'speichert …', offline: 'offline' }[syncStatus])),
     h('label', { class: 'field' }, 'Wer bist du in dieser Fahrgemeinschaft?',
       h('select', {
         onchange: (e) => act(async () => {
@@ -179,15 +207,15 @@ function groupView() {
         h('button', {
           type: 'button', class: 'btn btn-small btn-primary', disabled: !link,
           onclick: async () => { try { await navigator.clipboard.writeText(link); toast('Einladungslink kopiert', 'ok'); } catch { prompt('Link kopieren:', link); } },
-        }, '📋 Kopieren'),
+        }, icon('copy', { size: 15 }), 'Kopieren'),
       ),
     ),
     memberList.length ? h('div', {},
       h('div', { class: 'muted small' }, `Mitglieder (${memberList.length})`),
-      h('ul', { class: 'members' }, memberList.map((m) => h('li', {}, `👤 ${m.display_name || 'Unbekannt'}`, m.person_id ? h('span', { class: 'muted' }, ` = ${nameOf(m.person_id) || '?'}`) : h('span', { class: 'muted' }, ' (noch nicht zugeordnet)'), m.user_id === user.id ? h('strong', {}, ' · du') : null))),
+      h('ul', { class: 'members' }, memberList.map((m) => h('li', {}, m.display_name || 'Unbekannt', m.person_id ? h('span', { class: 'muted' }, ` = ${nameOf(m.person_id) || '?'}`) : h('span', { class: 'muted' }, ' (noch nicht zugeordnet)'), m.user_id === user.id ? h('strong', {}, ' · du') : null))),
     ) : null,
     h('div', { class: 'row gap wrap' },
-      h('button', { type: 'button', class: 'btn btn-small btn-ghost', onclick: () => { deactivate(); renderDialog(); toast('Wieder lokal – deine eigenen Daten sind zurück'); } }, '📱 Nur lokal arbeiten'),
+      h('button', { type: 'button', class: 'btn btn-small btn-ghost', onclick: () => { deactivate(); renderDialog(); toast('Wieder lokal – deine eigenen Daten sind zurück'); } }, 'Nur lokal arbeiten'),
       h('button', {
         type: 'button', class: 'btn btn-small btn-ghost danger-text',
         onclick: () => {
@@ -230,7 +258,7 @@ function groupsView() {
       },
         h('input', { type: 'text', required: true, maxlength: 80, placeholder: 'Name, z. B. Pendeln Stuttgart', oninput: (e) => { newName = e.target.value; } }),
         h('label', { class: 'check small' }, h('input', { type: 'checkbox', checked: true, onchange: (e) => { takeData = e.target.checked; } }), ' Meine bisherigen Daten (Strecke, Personen, Fahrten) mitnehmen'),
-        h('button', { type: 'submit', class: 'btn btn-primary', disabled: busy }, '＋ Anlegen'),
+        h('button', { type: 'submit', class: 'btn btn-primary', disabled: busy }, icon('plus', { size: 16 }), 'Anlegen'),
       ),
     ),
     h('section', {},
@@ -252,7 +280,7 @@ function renderDialog() {
   d.replaceChildren(h('div', { class: 'acc' },
     h('div', { class: 'row between' },
       h('h2', {}, user ? 'Konto & Fahrgemeinschaft' : 'Anmelden'),
-      h('button', { type: 'button', class: 'icon-btn big', 'aria-label': 'Schließen', onclick: () => d.close() }, '✕')),
+      h('button', { type: 'button', class: 'icon-btn tinted', 'aria-label': 'Schließen', onclick: () => d.close() }, icon('x', { size: 18 }))),
     error ? h('p', { class: 'acc-error' }, error) : null,
     user
       ? [
@@ -281,6 +309,8 @@ function parseJoin(text) {
 
 export async function initAccount() {
   document.getElementById('btn-account').onclick = openAccount;
+  const mobileBtn = document.getElementById('btn-account-mobile');
+  if (mobileBtn) mobileBtn.onclick = openAccount;
   const code = parseJoin(location.hash);
   if (code) {
     pendingJoin = code;
@@ -308,8 +338,16 @@ export async function initAccount() {
   if (pendingJoin) openAccount();
 
   // Nachschauen, ob jemand anderes etwas geändert hat (falls Live-Updates nicht ankommen)
-  const poll = () => { if (inGroup() && !document.hidden) sync.remoteChanged(Infinity); };
-  document.addEventListener('visibilitychange', poll);
-  setInterval(poll, 60_000);
+  let lastPoll = 0;
+  const poll = (force) => {
+    if (!inGroup() || document.hidden) return;
+    // Ohne Live-Verbindung alle 15 s nachschauen, sonst nur jede Minute als Absicherung
+    if (force !== true && Date.now() - lastPoll < (live ? 60_000 : 15_000)) return;
+    lastPoll = Date.now();
+    sync.remoteChanged(Infinity);
+  };
+  document.addEventListener('visibilitychange', () => poll(true));
+  window.addEventListener('focus', () => poll(true));
+  setInterval(poll, 5_000);
   window.addEventListener('pagehide', () => { if (inGroup()) sync.flush(); });
 }

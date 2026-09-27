@@ -4,6 +4,7 @@ import { fetchStations, fetchPrices, samplePoints, distanceToRoute } from './api
 import { FUELS, legCost, calcTrip, DIRECTIONS } from './calc.js';
 import { TYPICAL_CURVE, bestWindow, worstHour, profileFromObservations, blendProfile } from './fueltimes.js';
 import { h, stat, fmtEuro, fmtL, fmtPrice, fmtKm, toast } from './ui.js';
+import { icon } from './icons.js';
 
 const MAX_OBS = 5000;
 const REFRESH_MS = 15 * 60 * 1000; // Tankerkönig: automatische Abfragen höchstens alle 5 Minuten
@@ -112,9 +113,9 @@ export function startAutoRefresh() {
 
 // ---------- Darstellung ----------
 
-function carCard() {
+export function carCard() {
   return h('section', { class: 'card' },
-    h('h2', {}, 'Dein Auto'),
+    h('h2', {}, 'Verbrauch & Kraftstoff'),
     h('div', { class: 'grid2' },
       h('label', { class: 'field' }, 'Verbrauch (l/100 km)',
         h('input', {
@@ -137,7 +138,7 @@ function carCard() {
   );
 }
 
-function priceCard(map) {
+export function priceCard(map) {
   const fuel = tkFuel();
   const price = effectivePrice();
   const modes = [['cheapest', 'Günstigste an der Strecke'], ['station', 'Tankstelle wählen'], ['manual', 'Manuell']];
@@ -172,7 +173,7 @@ function priceCard(map) {
   }
 
   card.append(h('details', { class: 'more', open: !state.apiKey },
-    h('summary', {}, state.apiKey ? 'Tankerkönig-API-Key ✓' : 'Tankerkönig-API-Key eintragen'),
+    h('summary', {}, state.apiKey ? 'Tankerkönig-API-Key hinterlegt' : 'Tankerkönig-API-Key eintragen'),
     h('p', { class: 'hint' }, 'Live-Preise kommen von der Markttransparenzstelle über ',
       h('a', { href: 'https://onboarding.tankerkoenig.de/', target: '_blank', rel: 'noopener' }, 'Tankerkönig'),
       '. Der Key ist kostenlos (E-Mail genügt) und bleibt nur in deinem Browser gespeichert.'),
@@ -184,7 +185,7 @@ function priceCard(map) {
 
   card.append(h('button', {
     type: 'button', class: 'btn btn-primary full', disabled: loading || !state.apiKey, onclick: loadStations,
-  }, loading ? 'Lade Tankstellen …' : state.stations.length ? '↻ Preise an der Strecke neu laden' : 'Tankstellen an der Strecke laden'));
+  }, icon(state.stations.length ? 'refresh-cw' : 'fuel', { size: 17 }), loading ? 'Lade Tankstellen …' : state.stations.length ? 'Preise neu laden' : 'Tankstellen an der Strecke laden'));
 
   const list = sortedStations(fuel);
   if (list.length) {
@@ -197,7 +198,7 @@ function priceCard(map) {
         h('span', { class: 'station-addr' }, `${st.address} · ${fmtKm(st.detour)} von der Route`)),
       h('span', { class: 'station-price' }, fmtPrice(st[fuel]),
         st[fuel] > min ? h('small', {}, `+${Math.round((st[fuel] - min) * 100)} ct`) : h('small', { class: 'ok' }, 'günstigste')),
-      h('button', { type: 'button', class: 'icon-btn', title: 'Auf Karte zeigen', onclick: () => map.focusStation(st) }, '📍'),
+      h('button', { type: 'button', class: 'icon-btn', title: 'Auf Karte zeigen', onclick: () => map.focusStation(st) }, icon('map-pin', { size: 18 })),
     ))));
     card.append(h('p', { class: 'hint small' }, 'Preisdaten: Markttransparenzstelle für Kraftstoffe via tankerkoenig.de (CC BY 4.0). Preise werden alle 15 Minuten aktualisiert, solange die Seite offen ist.'));
   }
@@ -217,7 +218,7 @@ function weeklyLiters() {
   return { liters: (km * (state.roundTrip ? 2 : 1) * 5 * state.car.consumption) / 100, source: 'geschätzt für 5 Arbeitstage' };
 }
 
-function timeCard() {
+export function timeCard() {
   const fuel = tkFuel();
   const own = fuel ? profileFromObservations(state.observations, fuel) : { count: 0, hoursCovered: 0 };
   const hasOwn = own.count >= 12 && own.hoursCovered >= 6;
@@ -264,7 +265,7 @@ function timeCard() {
   );
 }
 
-function costCard() {
+export function costCard() {
   const legs = currentLegs();
   const km = legs.reduce((a, l) => a + l.km, 0);
   if (!km) return null;
@@ -283,10 +284,5 @@ function costCard() {
       h('thead', {}, h('tr', {}, h('th', {}, 'Personen im Auto'), h('th', {}, 'pro Person & Fahrt'), h('th', {}, state.roundTrip ? 'pro Person & Tag' : ''))),
       h('tbody', {}, [1, 2, 3, 4, 5].map((n) => h('tr', {},
         h('td', {}, `${n}`), h('td', {}, fmtEuro(one.total / n)), h('td', {}, state.roundTrip ? fmtEuro((one.total * 2) / n) : ''))))),
-    h('p', { class: 'hint small' }, 'Wer wann mitfährt und wie genau aufgeteilt wird, legst du im Tab „Fahrten“ fest.'),
   );
-}
-
-export function renderFuelTab(el, { map }) {
-  el.append(...[carCard(), priceCard(map), costCard(), timeCard()].filter(Boolean));
 }

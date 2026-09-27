@@ -9,15 +9,16 @@ export const payKey = (week, from, to) => `${week}|${from}|${to}`;
 
 /**
  * Ausgleichszahlungen pro Woche.
- * weeks: state.weeks, opts: Aufteilungsregeln, roundTrip: Rückfahrten mitzählen?
+ * weeks: state.weeks, opts: Aufteilungsregeln, roundTrip: Rückfahrten mitzählen?, until: nur Fahrten bis zu diesem Tag
  * → [{ key, week, from, to, amount, trips, km }]
  */
-export function weeklyDebts(weeks, opts = {}, roundTrip = true) {
+export function weeklyDebts(weeks, opts = {}, roundTrip = true, until = '9999-12-31') {
   const dirs = roundTrip ? DIRECTIONS : ['hin'];
   const out = [];
   for (const [week, w] of Object.entries(weeks)) {
     const entries = [];
     for (const [date, d] of Object.entries(w.days)) {
+      if (date > until) continue; // geplante Fahrten in der Zukunft sind noch nicht fällig
       for (const dir of dirs) if (d[dir]) entries.push({ trip: d[dir], snap: w.snap, date, direction: dir });
     }
     if (!entries.length) continue;
