@@ -1,6 +1,8 @@
 // Tab "Abrechnung": fair aufteilen, wer schuldet wem wie viel.
 import { state, update, personById } from './state.js';
 import { aggregate, settle, addDays, isoWeek, mondayOf, toISODate, DIRECTIONS, FUELS } from './calc.js';
+import { paymentMessage, paypalLink, paypalUser, waLink, waPhone } from './pay.js';
+import { payUi } from './tab-trips.js';
 import { h, stat, fmtEuro, fmtKm, fmtL, fmtDate, fmtPrice, fmtDuration, toast } from './ui.js';
 
 function periodRange() {
@@ -125,6 +127,48 @@ function valuesCard(entries, agg) {
   );
 }
 
+const copy = async (text, msg) => {
+  try { await navigator.clipboard.writeText(text); toast(msg, 'ok'); } catch { prompt('Kopieren:', text); }
+};
+
+/** Eine Ausgleichszahlung mit WhatsApp- und PayPal-Knöpfen. */
+function transferRow(t, range, agg) {
+  const from = personById(t.from);
+  const to = personById(t.to);
+  const x = agg.persons[t.from];
+  const pp = paypalUser(to?.paypal);
+  const message = paymentMessage({
+    fromName: nameOf(t.from),
+    toName: nameOf(t.to),
+    amount: t.amount,
+    period: range.label === 'Alle Fahrten' ? 'insgesamt' : `für ${range.label}`,
+    details: x ? `${x.trips} Fahrten, ${fmtKm(x.km)}` : '',
+    paypal: pp,
+  });
+  return h('li', {},
+    h('span', { class: 'who', style: { color: from?.color } }, nameOf(t.from)),
+    h('span', { class: 'arrow' }, '→'),
+    h('span', { class: 'who', style: { color: to?.color } }, nameOf(t.to)),
+    h('strong', {}, fmtEuro(t.amount)),
+    h('div', { class: 'pay-actions' },
+      h('a', {
+        class: 'btn btn-small btn-wa', href: waLink(from?.phone, message), target: '_blank', rel: 'noopener',
+        title: waPhone(from?.phone) ? `Nachricht direkt an ${nameOf(t.from)}` : 'WhatsApp öffnen und Kontakt auswählen',
+      }, `💬 WhatsApp an ${nameOf(t.from)}`),
+      pp ? h('button', { type: 'button', class: 'btn btn-small btn-pp', onclick: () => copy(paypalLink(pp, t.amount), 'PayPal-Link kopiert') }, '🅿️ PayPal-Link kopieren') : null,
+      h('button', { type: 'button', class: 'btn btn-small btn-ghost', onclick: () => copy(message, 'Nachricht kopiert') }, '📋 Nachricht'),
+      !pp ? h('button', {
+        type: 'button', class: 'link',
+        onclick: () => {
+          payUi.open = true;
+          update((s) => { s.ui.tab = 'trips'; });
+          setTimeout(() => document.getElementById('pay-settings')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
+        },
+      }, `PayPal von ${nameOf(t.to)} hinterlegen`) : null,
+    ),
+  );
+}
+
 function shareText(range, agg, transfers) {
   const lines = [`⛽ Tankkosten ${range.label}`, `Gesamt: ${fmtEuro(agg.total)} (${fmtKm(agg.km)}, ${agg.trips.length} Fahrten)`];
   if (agg.extraCost > 0) lines.push(`davon Sprit ${fmtEuro(agg.fuelCost)}, Nebenkosten ${fmtEuro(agg.extraCost)}`);
@@ -136,7 +180,10 @@ function shareText(range, agg, transfers) {
   }
   if (transfers.length) {
     lines.push('', 'Ausgleich:');
-    for (const t of transfers) lines.push(`${nameOf(t.from)} → ${nameOf(t.to)}: ${fmtEuro(t.amount)}`);
+    for (const t of transfers) {
+      const link = paypalLink(personById(t.to)?.paypal, t.amount);
+      lines.push(`${nameOf(t.from)} → ${nameOf(t.to)}: ${fmtEuro(t.amount)}${link ? `\n   PayPal (Freunde & Familie): ${link}` : ''}`);
+    }
   }
   return lines.join('\n');
 }
@@ -205,11 +252,7 @@ export function renderBillTab(el) {
     h('section', { class: 'card' },
       h('h2', {}, 'Ausgleich'),
       transfers.length
-        ? h('ul', { class: 'transfers' }, transfers.map((t) => h('li', {},
-          h('span', { class: 'who', style: { color: personById(t.from)?.color } }, nameOf(t.from)),
-          h('span', { class: 'arrow' }, '→'),
-          h('span', { class: 'who', style: { color: personById(t.to)?.color } }, nameOf(t.to)),
-          h('strong', {}, fmtEuro(t.amount)))))
+        ? h('ul', { class: 'transfers' }, transfers.map((t) => transferRow(t, range, agg)))
         : h('p', {}, 'Alles ausgeglichen 🎉'),
       h('p', { class: 'hint small' }, 'Annahme: Wer fährt, bezahlt auch den Sprit für diese Fahrt. Wechselt ihr euch ab, wird hier automatisch verrechnet.'),
       h('div', { class: 'row gap wrap' },

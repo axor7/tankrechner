@@ -1,9 +1,11 @@
 // Tab "Fahrten": Mitfahrer verwalten und Wochenplan (wer fährt wann welche Teilstrecke mit).
 import { state, update, getWeek, makeSnapshot, uid, COLORS, personById } from './state.js';
 import { calcTrip, aggregate, directedLegs, weekDates, addDays, isoWeek, mondayOf, toISODate, DIRECTIONS, ridersOnLeg, weekdayIndex, hasOwners, tripPeople } from './calc.js';
+import { paypalUser, paypalLink, waPhone } from './pay.js';
 import { h, chip, fmtEuro, fmtKm, fmtDate, fmtPrice, fmtDuration, toast } from './ui.js';
 
 const openLegs = new Set(); // aufgeklappte Teilstrecken-Editoren
+export const payUi = { open: false }; // PayPal/WhatsApp-Bereich aufgeklappt?
 const DIR_LABEL = { hin: 'Hinfahrt', rueck: 'Rückfahrt' };
 
 // ---------- Personen ----------
@@ -56,6 +58,36 @@ function personsCard() {
     h('label', { class: 'field inline' }, '🚗 Wer fährt normalerweise (und bezahlt den Sprit)?',
       h('select', { onchange: (e) => update((s) => { s.defaultDriver = e.target.value; }) },
         state.persons.map((p) => h('option', { value: p.id, selected: p.id === state.defaultDriver }, p.name)))),
+    payDetails(),
+  );
+}
+
+function payDetails() {
+  return h('details', { class: 'more', id: 'pay-settings', open: payUi.open, ontoggle: (e) => { payUi.open = e.target.open; } },
+    h('summary', {}, '💳 PayPal & WhatsApp (optional)'),
+    h('p', { class: 'hint small' }, 'Wer Geld bekommt (meist der Fahrer), trägt seinen PayPal.me-Namen ein. In der Abrechnung kannst du dann jedem per WhatsApp eine Nachricht mit seinem Betrag und fertigem PayPal-Link schicken. Mit Handynummer geht die Nachricht direkt an die richtige Person.'),
+    h('div', { class: 'pay-grid' },
+      h('span', { class: 'muted small' }, ''), h('span', { class: 'muted small' }, 'PayPal.me-Name'), h('span', { class: 'muted small' }, 'Handy (WhatsApp)'),
+      state.persons.map((p) => {
+        const pp = paypalUser(p.paypal);
+        return [
+          h('span', { class: 'pay-name', style: { '--pc': p.color } }, h('span', { class: 'dot' }), p.name),
+          h('div', {},
+            h('input', {
+              type: 'text', value: p.paypal || '', placeholder: 'z. B. maxmuster', spellcheck: false, autocapitalize: 'off', 'aria-label': `PayPal.me von ${p.name}`,
+              onchange: (e) => update((s) => { personById(p.id).paypal = paypalUser(e.target.value) || e.target.value.trim(); }),
+            }),
+            p.paypal ? h('small', { class: pp ? 'ok' : 'warn' }, pp ? `✓ ${paypalLink(pp).replace('https://', '')}` : 'Ungültiger Name') : null),
+          h('div', {},
+            h('input', {
+              type: 'tel', value: p.phone || '', placeholder: '0151 …', 'aria-label': `Handynummer von ${p.name}`,
+              onchange: (e) => update((s) => { personById(p.id).phone = e.target.value.trim(); }),
+            }),
+            p.phone && !waPhone(p.phone) ? h('small', { class: 'warn' }, 'Nummer prüfen') : null),
+        ];
+      }),
+    ),
+    h('p', { class: 'hint small' }, 'Die Daten bleiben nur in diesem Browser gespeichert.'),
   );
 }
 

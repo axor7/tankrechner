@@ -167,7 +167,7 @@ body.loading-route .map-loading { display: block; }
 .full { width: 100%; }
 
 /* ---------- Formularelemente ---------- */
-input[type="text"], input[type="number"], input[type="date"], select {
+input[type="text"], input[type="tel"], input[type="number"], input[type="date"], select {
   font: inherit; color: var(--text); background: var(--surface-2);
   border: 1px solid var(--border); border-radius: 10px; padding: .55rem .7rem; width: 100%; min-width: 0;
 }
@@ -437,3 +437,16 @@ details.more > * + * { margin-top: .5rem; }
 .trip-legs td:last-child { text-align: right; white-space: nowrap; }
 .dots { display: inline-flex; gap: 3px; margin-top: 2px; }
 .dots .dot { width: .6rem; height: .6rem; }
+
+/* PayPal & WhatsApp */
+.pay-grid { display: grid; grid-template-columns: auto 1fr 1fr; gap: .35rem .5rem; align-items: start; }
+.pay-grid input { padding: .4rem .55rem; font-size: .88rem; }
+.pay-grid small { display: block; font-size: .72rem; margin-top: .1rem; overflow-wrap: anywhere; }
+.pay-name { display: flex; align-items: center; gap: .35rem; font-size: .88rem; font-weight: 600; padding-top: .45rem; }
+.transfers li { flex-wrap: wrap; }
+.pay-actions { display: flex; gap: .35rem; flex-wrap: wrap; width: 100%; }
+.btn-wa { background: #25d366; color: #06301a; border-color: transparent; }
+.btn-wa:hover:not(:disabled) { background: #1ebe5b; }
+.btn-pp { background: #ffc439; color: #111; border-color: transparent; }
+@media (max-width: 480px) { .pay-grid { grid-template-columns: 1fr 1fr; } .pay-name { grid-column: 1 / -1; padding-top: .3rem; } .pay-grid > .muted:first-child { display: none; } }
+a.btn { text-decoration: none; display: inline-flex; align-items: center; }
