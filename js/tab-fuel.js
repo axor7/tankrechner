@@ -127,7 +127,7 @@ function carCard() {
     ),
     h('details', { class: 'more' },
       h('summary', {}, 'Weitere Kosten pro km (optional)'),
-      h('p', { class: 'hint' }, 'Wenn ihr Verschleiß, Reifen oder Maut mit einrechnen wollt, gib hier Cent pro km an (z. B. 5 ct/km). Wird genauso fair aufgeteilt wie der Sprit.'),
+      h('p', { class: 'hint' }, 'Wenn ihr Verschleiß, Reifen oder Maut mit einrechnen wollt, gib hier Cent pro km an (z. B. 5 ct/km). Wird genauso fair aufgeteilt wie der Sprit: pro Teilstrecke unter allen, die dort im Auto sitzen. Der Betrag geht an den Fahrer der jeweiligen Fahrt. Für schon eingetragene Wochen im Tab „Fahrten“ auf „Aktuelle Werte übernehmen“ tippen.'),
       h('label', { class: 'field' }, 'Zusatzkosten (ct/km)',
         h('input', {
           type: 'number', min: 0, step: 0.5, value: state.car.extraPerKm,

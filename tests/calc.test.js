@@ -118,3 +118,23 @@ test('Eigene Messungen → Stundenprofil', () => {
   close(p.curve[20], 0);
   assert.equal(p.curve[12], null);
 });
+
+test('Zusatzkosten (ct/km) werden pro Teilstrecke wie Sprit aufgeteilt', () => {
+  const s = { legs: [{ km: 20 }, { km: 80 }], consumption: 0, price: 0, extraPerKm: 5 };
+  const trip = { driver: 'ich', legs: [['ich', 'anna'], ['ich', 'anna', 'ben']] };
+  const r = calcTrip(trip, s);
+  close(r.extraCost, 5); // 100 km × 5 ct
+  close(r.fuelCost, 0);
+  close(r.shares.ich, 0.5 + 4 / 3);
+  close(r.shares.anna, 0.5 + 4 / 3);
+  close(r.shares.ben, 4 / 3);
+  const noDriver = calcTrip(trip, s, { driverPays: false });
+  close(noDriver.shares.anna, 1 + 2);
+  close(noDriver.shares.ben, 2);
+  // gemischt: Sprit und Zusatzkosten getrennt ausgewiesen, Summe stimmt
+  const mixed = aggregate([{ trip, snap: { ...s, consumption: 5, price: 2 } }]);
+  close(mixed.fuelCost, 10);
+  close(mixed.extraCost, 5);
+  close(mixed.total, 15);
+  close(mixed.persons.ich.paid, 15);
+});

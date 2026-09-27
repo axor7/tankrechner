@@ -60,6 +60,8 @@ export function calcTrip(trip, snap, opts = {}) {
   const shares = {};
   const km = {};
   let total = 0;
+  let fuelCost = 0;
+  let extraCost = 0;
   let liters = 0;
   let dist = 0;
   const legDetails = [];
@@ -70,6 +72,8 @@ export function calcTrip(trip, snap, opts = {}) {
     const c = legCost(leg.km, snap);
     const riders = ridersOnLeg(trip, i, n);
     total += c.total;
+    fuelCost += c.fuel;
+    extraCost += c.extra;
     liters += c.liters;
     dist += leg.km;
     for (const p of riders) add(km, p, leg.km);
@@ -92,7 +96,7 @@ export function calcTrip(trip, snap, opts = {}) {
     for (const p of payers) add(shares, p, total / payers.length);
   }
 
-  return { total, liters, km: dist, shares, kmPerPerson: km, payer: trip.driver || null, legs: legDetails };
+  return { total, fuelCost, extraCost, liters, km: dist, shares, kmPerPerson: km, payer: trip.driver || null, legs: legDetails };
 }
 
 /** Summiert beliebig viele Fahrten: [{trip, snap, date, direction}] */
@@ -100,12 +104,16 @@ export function aggregate(entries, opts = {}) {
   const persons = {};
   const get = (id) => (persons[id] ||= { share: 0, paid: 0, km: 0, trips: 0 });
   let total = 0;
+  let fuelCost = 0;
+  let extraCost = 0;
   let liters = 0;
   let km = 0;
   const trips = [];
   for (const e of entries) {
     const r = calcTrip(e.trip, e.snap, opts);
     total += r.total;
+    fuelCost += r.fuelCost;
+    extraCost += r.extraCost;
     liters += r.liters;
     km += r.km;
     for (const [p, v] of Object.entries(r.shares)) get(p).share += v;
@@ -114,7 +122,7 @@ export function aggregate(entries, opts = {}) {
     trips.push({ ...e, result: r });
   }
   for (const p of Object.values(persons)) p.balance = p.paid - p.share;
-  return { total, liters, km, persons, trips };
+  return { total, fuelCost, extraCost, liters, km, persons, trips };
 }
 
 /** Wer zahlt wem wie viel? Minimiert grob die Anzahl Überweisungen. Beträge in Euro, auf Cent gerundet. */

@@ -92,7 +92,7 @@ function weekHeader(monday, week) {
       h('button', { type: 'button', class: 'btn btn-small btn-ghost', onclick: () => update((s) => { s.ui.week = mondayOf(toISODate(new Date())); }) }, 'Heute'),
     ),
     snap ? h('div', { class: `snapline ${snapDiffers(snap, cur) ? 'stale' : ''}` },
-      h('span', {}, `Diese Woche: ${fmtKm(snap.legs.reduce((a, l) => a + l.km, 0))} · ${String(snap.consumption).replace('.', ',')} l/100 km · ${fmtPrice(snap.price)}/l`),
+      h('span', {}, `Diese Woche: ${fmtKm(snap.legs.reduce((a, l) => a + l.km, 0))} · ${String(snap.consumption).replace('.', ',')} l/100 km · ${fmtPrice(snap.price)}/l${snap.extraPerKm > 0 ? ` · + ${String(snap.extraPerKm).replace('.', ',')} ct/km Zusatzkosten` : ''}`),
       snapDiffers(snap, cur) ? h('button', {
         type: 'button', class: 'btn btn-small', title: 'Aktuelle Strecke, aktuellen Verbrauch und Preis für diese Woche übernehmen',
         onclick: () => update((s) => {

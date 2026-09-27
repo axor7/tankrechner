@@ -78,7 +78,9 @@ function rulesCard() {
 }
 
 function shareText(range, agg, transfers) {
-  const lines = [`⛽ Tankkosten ${range.label}`, `Gesamt: ${fmtEuro(agg.total)} (${fmtKm(agg.km)}, ${agg.trips.length} Fahrten)`, ''];
+  const lines = [`⛽ Tankkosten ${range.label}`, `Gesamt: ${fmtEuro(agg.total)} (${fmtKm(agg.km)}, ${agg.trips.length} Fahrten)`];
+  if (agg.extraCost > 0) lines.push(`davon Sprit ${fmtEuro(agg.fuelCost)}, Zusatzkosten ${fmtEuro(agg.extraCost)}`);
+  lines.push('');
   for (const p of state.persons) {
     const x = agg.persons[p.id];
     if (x) lines.push(`${p.name}: ${fmtEuro(x.share)} (${fmtKm(x.km)})`);
@@ -138,7 +140,7 @@ export function renderBillTab(el) {
   el.append(
     h('section', { class: 'card' },
       h('div', { class: 'stats' },
-        stat('Gesamtkosten', fmtEuro(agg.total)),
+        stat('Gesamtkosten', fmtEuro(agg.total), agg.extraCost > 0 ? `Sprit ${fmtEuro(agg.fuelCost)} · Zusatz ${fmtEuro(agg.extraCost)}` : null),
         stat('Gefahren', fmtKm(agg.km), `${agg.trips.length} Fahrten`),
         stat('Verbraucht', fmtL(agg.liters)),
       ),
@@ -149,7 +151,7 @@ export function renderBillTab(el) {
         h('div', { class: 'share-name' }, h('span', { class: 'dot' }), p.name),
         h('div', { class: 'share-bar' }, h('div', { class: 'share-fill', style: { width: `${(x.share / maxShare) * 100}%` } })),
         h('div', { class: 'share-amount' }, fmtEuro(x.share)),
-        h('div', { class: 'share-meta muted' }, `${x.trips} Fahrten · ${fmtKm(x.km)}${x.paid ? ` · hat ${fmtEuro(x.paid)} getankt` : ''}`),
+        h('div', { class: 'share-meta muted' }, `${x.trips} Fahrten · ${fmtKm(x.km)}${x.paid ? ` · hat ${fmtEuro(x.paid)} ausgelegt (als Fahrer)` : ''}`),
       ))),
     ),
     h('section', { class: 'card' },
