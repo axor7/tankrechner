@@ -8,6 +8,7 @@ import { renderFuelTab, stationSelected, startAutoRefresh } from './tab-fuel.js'
 import { renderTripsTab } from './tab-trips.js';
 import { renderBillTab } from './tab-bill.js';
 import { loadExample } from './example.js';
+import { setupVersion } from './version.js';
 
 const TABS = [
   { id: 'route', icon: '🗺️', label: 'Strecke' },
@@ -369,6 +370,7 @@ function setupMenu() {
 }
 
 function init() {
+  setupVersion(); // zuerst, damit die Version auch sichtbar ist, falls danach etwas schiefgeht
   map = new MapView($('#map'), mapHandlers);
   subscribe(requestRender);
   document.addEventListener('pointerdown', () => { pointerDown = true; }, true);

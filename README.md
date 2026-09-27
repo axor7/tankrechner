@@ -54,6 +54,9 @@ python3 -m http.server 8080
 
 Veröffentlichen z. B. über GitHub Pages: Repository → Settings → Pages → „Deploy from a branch“ → `main` / `root`.
 
+Welche Version geladen ist, steht unten auf der Seite und im Menü ☰ („Version vom …“ = Zeitpunkt der Veröffentlichung).
+Ist inzwischen eine neuere Version online, erscheint oben „Neue Version verfügbar“ mit einem Knopf zum Neuladen.
+
 ### Live-Spritpreise
 
 Für Live-Preise brauchst du einen kostenlosen API-Key von [Tankerkönig](https://onboarding.tankerkoenig.de/) und trägst ihn im Tab „Auto & Sprit“ ein.
@@ -86,5 +89,6 @@ js/fueltimes.js     Beste Tankzeit
 js/state.js         Zustand & Speicherung
 js/tab-*.js         Die Tabs „Auto & Sprit“, „Fahrten“, „Abrechnung“
 js/example.js       Beispieldaten
+js/version.js       Versionsanzeige & Hinweis auf neue Version
 tests/              Tests (node --test)
 ```
