@@ -1,5 +1,8 @@
 // Tab "Auto & Sprit": Verbrauch, Kraftstoff, Tankstellenpreise, beste Tankzeit.
-import { state, update, validStops, effectivePrice, currentLegs, getWeek } from './state.js';
+import { state, update, effectivePrice, model, personById, todayIso } from './state.js';
+import { adminSet } from './actions.js';
+import { entries } from './derived.js';
+import { mondayOf, addDays } from './calc.js';
 import { fetchStations, fetchPrices, samplePoints, distanceToRoute } from './api.js';
 import { FUELS, legCost, calcTrip, DIRECTIONS } from './calc.js';
 import { TYPICAL_CURVE, bestWindow, worstHour, profileFromObservations, blendProfile } from './fueltimes.js';
@@ -58,8 +61,9 @@ export function stationSelected(id) {
 
 export async function loadStations() {
   if (!state.apiKey) { toast('Bitte zuerst einen Tankerkönig-API-Key eintragen', 'error'); return; }
-  const stops = validStops();
-  if (!stops.length) { toast('Bitte zuerst eine Strecke eingeben', 'error'); return; }
+  const drv = personById(state.defaultDriver)?.address;
+  const stops = [drv, state.destination].filter((x) => x?.lat != null);
+  if (!stops.length) { toast('Bitte zuerst Start und Ziel eingeben', 'error'); return; }
   loading = true;
   update(() => {});
   try {
@@ -120,10 +124,10 @@ export function carCard() {
       h('label', { class: 'field' }, 'Verbrauch (l/100 km)',
         h('input', {
           type: 'number', min: 0, step: 0.1, value: state.car.consumption,
-          onchange: (e) => update((s) => { s.car.consumption = Number(e.target.value); }),
+          onchange: (e) => adminSet((s) => { s.car.consumption = Number(e.target.value); }, `Verbrauch: ${e.target.value} l/100 km`),
         })),
       h('label', { class: 'field' }, 'Kraftstoff',
-        h('select', { onchange: (e) => update((s) => { s.car.fuel = e.target.value; applyPriceMode(s); }) },
+        h('select', { onchange: (e) => adminSet((s) => { s.car.fuel = e.target.value; applyPriceMode(s); }, `Kraftstoff: ${FUELS[e.target.value]?.label}`) },
           Object.entries(FUELS).map(([k, f]) => h('option', { value: k, selected: k === state.car.fuel }, f.label)))),
     ),
     h('details', { class: 'more' },
@@ -132,7 +136,7 @@ export function carCard() {
       h('label', { class: 'field' }, 'Zusatzkosten (ct/km)',
         h('input', {
           type: 'number', min: 0, step: 0.5, value: state.car.extraPerKm,
-          onchange: (e) => update((s) => { s.car.extraPerKm = Number(e.target.value); }),
+          onchange: (e) => adminSet((s) => { s.car.extraPerKm = Number(e.target.value); }, `Nebenkosten: ${e.target.value} ct/km`),
         })),
     ),
   );
@@ -146,7 +150,7 @@ export function priceCard(map) {
 
   card.append(h('div', { class: 'segmented', role: 'radiogroup' }, modes.map(([m, label]) => h('button', {
     type: 'button', class: state.price.mode === m ? 'active' : '', role: 'radio', 'aria-checked': String(state.price.mode === m),
-    onclick: () => update((s) => { s.price.mode = m; applyPriceMode(s); }),
+    onclick: () => adminSet((s) => { s.price.mode = m; applyPriceMode(s); }, `Preisquelle: ${label}`),
   }, label))));
 
   const usingLive = state.price.mode !== 'manual' && state.price.current > 0;
@@ -161,7 +165,7 @@ export function priceCard(map) {
     card.append(h('label', { class: 'field' }, state.price.mode === 'manual' ? 'Preis pro Liter (€)' : 'Ersatzpreis pro Liter (€)',
       h('input', {
         type: 'number', min: 0, step: 0.001, value: state.price.manual,
-        onchange: (e) => update((s) => { s.price.manual = Number(e.target.value); }),
+        onchange: (e) => adminSet((s) => { s.price.manual = Number(e.target.value); }, `Spritpreis: ${e.target.value} €/l`),
       })));
   }
 
@@ -206,15 +210,11 @@ export function priceCard(map) {
 }
 
 function weeklyLiters() {
-  const w = getWeek(state.ui.week);
-  let liters = 0;
-  if (w) {
-    for (const day of Object.values(w.days)) {
-      for (const d of DIRECTIONS) if (day[d]) liters += calcTrip(day[d], w.snap, state.split, d).liters;
-    }
-  }
-  if (liters > 0) return { liters, source: 'laut Fahrtenplan dieser Woche' };
-  const km = currentLegs().reduce((a, l) => a + l.km, 0);
+  const monday = mondayOf(todayIso());
+  const list = entries(monday, addDays(monday, 6));
+  const liters = list.reduce((a, e) => a + calcTrip(e.trip, e.snap, state.split, e.direction).liters, 0);
+  if (liters > 0) return { liters, source: 'diese Woche bisher' };
+  const km = (state.route?.distance || 0) / 1000 || Number(state.manualKm) || 0;
   return { liters: (km * (state.roundTrip ? 2 : 1) * 5 * state.car.consumption) / 100, source: 'geschätzt für 5 Arbeitstage' };
 }
 
@@ -266,8 +266,7 @@ export function timeCard() {
 }
 
 export function costCard() {
-  const legs = currentLegs();
-  const km = legs.reduce((a, l) => a + l.km, 0);
+  const km = Math.round((state.route?.distance || 0) / 100) / 10 || Number(state.manualKm) || 0;
   if (!km) return null;
   const snap = { consumption: state.car.consumption, price: effectivePrice(), extraPerKm: state.car.extraPerKm };
   const c = legCost(km, snap);
@@ -276,7 +275,7 @@ export function costCard() {
   return h('section', { class: 'card' },
     h('h2', {}, 'Kosten auf einen Blick'),
     h('div', { class: 'stats' },
-      stat('Einfache Fahrt', fmtEuro(one.total), `${fmtKm(km)} · ${fmtL(one.liters)}`),
+      stat('Einfache Fahrt (alle abholen)', fmtEuro(one.total), `${fmtKm(km)} · ${fmtL(one.liters)}`),
       state.roundTrip ? stat('Hin & zurück', fmtEuro(one.total * 2), fmtL(one.liters * 2)) : null,
       stat('Woche (5 Tage)', fmtEuro(one.total * factor * 5)),
     ),

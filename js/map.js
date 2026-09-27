@@ -4,10 +4,11 @@ import { legIndexAt } from './api.js';
 
 const ROUTE_COLOR = '#2563eb';
 
-function stopIcon(i, n) {
+function stopIcon(i, n, color) {
   const kind = i === 0 ? 'start' : i === n - 1 ? 'end' : 'via';
   const text = i === 0 ? 'A' : i === n - 1 ? 'B' : String(i);
-  return L.divIcon({ className: '', html: `<div class="pin pin-${kind}"><span>${text}</span></div>`, iconSize: [30, 38], iconAnchor: [15, 36] });
+  const style = color ? ` style="background:${color}"` : '';
+  return L.divIcon({ className: '', html: `<div class="pin pin-${kind}"${style}><span>${text}</span></div>`, iconSize: [30, 38], iconAnchor: [15, 36] });
 }
 
 function priceColor(t) {
@@ -40,7 +41,7 @@ export class MapView {
     title.className = 'map-menu-title';
     title.textContent = 'Punkt setzen als …';
     box.append(title);
-    for (const [kind, label] of [['start', 'Start'], ['via', 'Zwischenstopp'], ['end', 'Ziel']]) {
+    for (const [kind, label] of this.h.menuItems || [['start', 'Start'], ['via', 'Zwischenstopp'], ['end', 'Ziel']]) {
       const b = document.createElement('button');
       b.className = `btn btn-small btn-${kind}`;
       b.textContent = label;
@@ -54,7 +55,7 @@ export class MapView {
     this.stopLayer.clearLayers();
     const valid = stops.filter((s) => s.lat != null);
     valid.forEach((s, i) => {
-      const m = L.marker([s.lat, s.lng], { icon: stopIcon(i, valid.length), draggable: true, autoPan: true, zIndexOffset: 1000 });
+      const m = L.marker([s.lat, s.lng], { icon: stopIcon(i, valid.length, s.color), draggable: s.draggable !== false, autoPan: true, zIndexOffset: 1000 });
       m.bindTooltip(s.label || 'Punkt', { direction: 'top', offset: [0, -34] });
       m.on('dragend', () => this.h.onStopMoved(s.id, m.getLatLng()));
       m.on('contextmenu', () => this.h.onStopRemove(s.id));
@@ -75,11 +76,13 @@ export class MapView {
     });
     L.polyline(route.coords, { color: '#fff', weight: 9, opacity: 0.9, interactive: false }).addTo(this.routeLayer);
     const main = L.polyline(route.coords, { color: ROUTE_COLOR, weight: 6, opacity: 0.95 });
-    main.bindTooltip('Klicken, um hier einen Zwischenstopp einzufügen', { sticky: true });
-    main.on('click', (e) => {
-      L.DomEvent.stopPropagation(e);
-      this.h.onInsertVia(legIndexAt(route, e.latlng) + 1, e.latlng);
-    });
+    if (this.h.onInsertVia) {
+      main.bindTooltip('Klicken, um hier einen Zwischenstopp einzufügen', { sticky: true });
+      main.on('click', (e) => {
+        L.DomEvent.stopPropagation(e);
+        this.h.onInsertVia(legIndexAt(route, e.latlng) + 1, e.latlng);
+      });
+    }
     main.addTo(this.routeLayer);
     if (returnRoute) { // Rückweg obendrauf, damit er auch auf gemeinsamen Straßen sichtbar ist
       const back = L.polyline(returnRoute.coords, { color: '#ea580c', weight: 4, opacity: 0.95, dashArray: '10 10', interactive: false });

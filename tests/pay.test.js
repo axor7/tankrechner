@@ -79,3 +79,12 @@ test('Offen, bezahlt, geändert und nach Paaren gruppiert', () => {
   const all = markPaid({}, debts);
   assert.equal(openByPair(withPayments(debts, all)).length, 0);
 });
+
+test('Geplante Fahrten in der Zukunft sind noch nicht fällig', () => {
+  const snap = { legs: [{ km: 100 }], consumption: 5, price: 2 };
+  const trip = { driver: 'me', legs: [['me', 'anna']] };
+  const weeks = { '2026-09-28': { snap, days: { '2026-09-28': { hin: trip }, '2026-10-01': { hin: trip } } } };
+  assert.equal(weeklyDebts(weeks, {}, true, '2026-09-29')[0].amount, 5);
+  assert.equal(weeklyDebts(weeks, {}, true)[0].amount, 10);
+  assert.equal(weeklyDebts(weeks, {}, true, '2026-09-27').length, 0);
+});

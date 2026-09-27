@@ -74,6 +74,20 @@ export async function fetchRoute(stops) {
   });
 }
 
+/**
+ * Beste Reihenfolge der Abholpunkte (Routenplaner löst das „Einsammel-Problem“).
+ * points: [start, ...abholpunkte, ziel] als { lat, lng } → Reihenfolge der Abholpunkte (Indizes 0..n-1)
+ */
+export async function optimizeOrder(points) {
+  if (points.length <= 3) return points.slice(1, -1).map((_, i) => i);
+  const coords = points.map((s) => `${s.lng.toFixed(6)},${s.lat.toFixed(6)}`).join(';');
+  const data = await getJSON(`${OSRM}/trip/v1/driving/${coords}?source=first&destination=last&roundtrip=false&overview=false`);
+  if (data.code !== 'Ok') throw new Error(data.message || data.code);
+  // waypoint_index = Position des Punkts in der besten Reihenfolge
+  const pos = data.waypoints.map((w, i) => ({ i, at: w.waypoint_index }));
+  return pos.slice(1, -1).sort((a, b) => a.at - b.at).map((x) => x.i - 1);
+}
+
 export function legIndexAt(route, latlng) {
   const i = nearestIndex(route.coords, [latlng.lat, latlng.lng]);
   for (let k = 0; k < route.wpIdx.length - 1; k++) if (i <= route.wpIdx[k + 1]) return k;

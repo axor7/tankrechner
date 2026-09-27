@@ -77,14 +77,14 @@ export async function myGroups() {
   const sb = await client();
   const user = await getUser();
   if (!user) return [];
-  const rows = await run(sb.from('group_members').select('group_id, person_id, groups(id, name, updated_at)').eq('user_id', user.id));
-  return rows.filter((r) => r.groups).map((r) => ({ id: r.groups.id, name: r.groups.name, updatedAt: r.groups.updated_at, personId: r.person_id }))
+  const rows = await run(sb.from('group_members').select('group_id, person_id, role, groups(id, name, updated_at)').eq('user_id', user.id));
+  return rows.filter((r) => r.groups).map((r) => ({ id: r.groups.id, name: r.groups.name, updatedAt: r.groups.updated_at, personId: r.person_id, role: r.role }))
     .sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
 }
 
 export async function members(groupId) {
   const sb = await client();
-  return run(sb.from('group_members').select('user_id, display_name, person_id').eq('group_id', groupId));
+  return run(sb.from('group_members').select('user_id, display_name, person_id, role, joined_at').eq('group_id', groupId).order('joined_at'));
 }
 
 export async function groupInfo(groupId) {
@@ -133,5 +133,56 @@ export async function watchGroup(groupId, fn, onLive = () => {}) {
   const channel = sb.channel(`group-${groupId}`)
     .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'groups', filter: `id=eq.${groupId}` }, (p) => fn(p.new?.version ?? Infinity))
     .subscribe((status) => onLive(status === 'SUBSCRIBED'));
+  return () => sb.removeChannel(channel);
+}
+
+// ---------- Rollen, Profile, Protokoll ----------
+
+export async function setRole(groupId, userId, role) {
+  const sb = await client();
+  await run(sb.rpc('set_member_role', { p_group: groupId, p_user: userId, p_role: role }));
+}
+
+export async function removeMember(groupId, userId) {
+  const sb = await client();
+  await run(sb.from('group_members').delete().eq('group_id', groupId).eq('user_id', userId));
+}
+
+export async function renewInvite(groupId) {
+  const sb = await client();
+  return run(sb.rpc('renew_invite', { p_group: groupId }));
+}
+
+/** Alle Profile der Fahrgemeinschaft: [{ userId, data, updatedAt }] */
+export async function loadProfiles(groupId) {
+  const sb = await client();
+  const rows = await run(sb.from('member_profiles').select('user_id, data, updated_at').eq('group_id', groupId));
+  return rows.map((r) => ({ userId: r.user_id, data: r.data || {}, updatedAt: r.updated_at }));
+}
+
+/** Eigenes Profil speichern. */
+export async function saveProfile(groupId, data) {
+  const sb = await client();
+  const user = await getUser();
+  await run(sb.from('member_profiles').upsert({ group_id: groupId, user_id: user.id, data, updated_at: new Date().toISOString() }));
+}
+
+export async function addLog(groupId, actor, action) {
+  const sb = await client();
+  const { error } = await sb.from('group_log').insert({ group_id: groupId, actor, action });
+  if (error) console.warn('Protokoll:', error.message);
+}
+
+export async function loadLog(groupId, limit = 150) {
+  const sb = await client();
+  return run(sb.from('group_log').select('actor, action, at').eq('group_id', groupId).order('at', { ascending: false }).limit(limit));
+}
+
+/** Live-Updates der Profile. */
+export async function watchProfiles(groupId, fn) {
+  const sb = await client();
+  const channel = sb.channel(`profiles-${groupId}`)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'member_profiles', filter: `group_id=eq.${groupId}` }, () => fn())
+    .subscribe();
   return () => sb.removeChannel(channel);
 }

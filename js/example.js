@@ -1,45 +1,34 @@
-// Beispieldaten zum Ausprobieren.
-import { defaultState, uid, COLORS, makeSnapshot } from './state.js';
-import { addDays, mondayOf, toISODate, weekDates } from './calc.js';
+// Beispieldaten zum Ausprobieren (Datenmodell v2).
+import { defaultState, uid, COLORS, todayIso } from './state.js';
+import { addDays, mondayOf } from './calc.js';
 
 export function loadExample() {
   const s = defaultState();
-  const [me, anna, ben, clara] = ['Ich', 'Anna', 'Ben', 'Clara'].map((name, i) => ({ id: uid(), name, color: COLORS[i] }));
-  s.persons = [me, anna, ben, clara];
+  const since = addDays(mondayOf(todayIso()), -14); // Regelplan gilt seit zwei Wochen
+  const MOFR = [true, true, true, true, true, false, false];
+  const days = (...i) => Array.from({ length: 7 }, (_, k) => i.includes(k));
+  const plan = (hin, rueck = hin) => [{ from: since, hin, rueck, at: 1 }];
+  const me = { id: uid(), name: 'Max', color: COLORS[0], active: true, plan: plan(MOFR), paypal: 'maxmuster',
+    address: { label: 'Karlsruhe Hauptbahnhof, 76137 Karlsruhe', lat: 48.9936, lng: 8.4011, at: 1 } };
+  const anna = { id: uid(), name: 'Anna', color: COLORS[1], active: true, plan: plan(days(0, 1, 2, 3), days(0, 1, 2)),
+    address: { label: 'Ettlingen Stadtbahnhof, 76275 Ettlingen', lat: 48.9406, lng: 8.4075, at: 1 } };
+  const ben = { id: uid(), name: 'Ben', color: COLORS[2], active: true, plan: plan(MOFR),
+    address: { label: 'Pforzheim Hauptbahnhof, 75175 Pforzheim', lat: 48.8934, lng: 8.7026, at: 1 } };
+  const clara = { id: uid(), name: 'Clara', color: COLORS[3], active: true, plan: plan(days(1, 3)),
+    address: { label: 'Leonberg Bahnhof, 71229 Leonberg', lat: 48.8003, lng: 9.0048, at: 1 } };
+  const tom = { id: uid(), name: 'Tom', color: COLORS[4], active: false, plan: [] }; // fährt nur ab und zu mit
+  s.persons = [me, anna, ben, clara, tom];
   s.defaultDriver = me.id;
-  s.stops = [
-    { id: uid(), label: 'Karlsruhe Hauptbahnhof, 76137 Karlsruhe', lat: 48.9936, lng: 8.4011, owners: [me.id] },
-    { id: uid(), label: 'Ettlingen Stadtbahnhof, 76275 Ettlingen', lat: 48.9406, lng: 8.4075, owners: [anna.id] },
-    { id: uid(), label: 'Pforzheim Hauptbahnhof, 75175 Pforzheim', lat: 48.8934, lng: 8.7026, owners: [ben.id, clara.id] },
-    { id: uid(), label: 'Stuttgart Hauptbahnhof, 70173 Stuttgart', lat: 48.784, lng: 9.1817, owners: [] },
-  ];
+  s.destination = { label: 'Stuttgart Hauptbahnhof, 70173 Stuttgart', lat: 48.784, lng: 9.1817 };
   s.car = { consumption: 6.5, fuel: 'e10', extraPerKm: 0 };
   s.price = { ...s.price, mode: 'manual', manual: 1.749 };
-  s.exampleFresh = true; // echte Kilometer kommen, sobald die Route berechnet ist
-
-  // Jeder steigt an seiner eigenen Adresse zu – die Teilstrecken ergeben sich automatisch.
-  const snap = makeSnapshot(s);
-  const trip = (people, driver = me.id) => ({ driver, legs: [[...people]] });
-  const all = [me.id, anna.id, ben.id, clara.id];
-
-  const thisWeek = mondayOf(toISODate(new Date()));
-  const lastWeek = addDays(thisWeek, -7);
-  const d = weekDates(thisWeek);
-  const p = weekDates(lastWeek);
-
-  s.weeks[lastWeek] = {
-    snap: { ...snap, price: 1.789 },
-    days: Object.fromEntries(p.slice(0, 5).map((date, i) => [date, { hin: trip(all, i === 4 ? anna.id : me.id), rueck: trip(all, i === 4 ? anna.id : me.id) }])),
-  };
-  s.weeks[thisWeek] = {
-    snap,
-    days: {
-      [d[0]]: { hin: trip(all), rueck: trip(all) },
-      [d[1]]: { hin: trip(all), rueck: trip([me.id, anna.id, clara.id]) }, // Ben fährt nicht mit zurück
-      [d[2]]: { hin: trip([me.id, anna.id, ben.id]), rueck: trip(all) }, // Clara kommt nur zurück mit
-      [d[3]]: { hin: trip([me.id, anna.id, ben.id]), rueck: trip([me.id, anna.id, ben.id]) },
-      [d[4]]: { hin: trip([me.id, ben.id]), rueck: trip([me.id, ben.id]) }, // Anna fehlt → Ettlingen wird ausgelassen
-    },
-  };
+  s.setupDone = true;
+  s.setupCar = true;
+  // Ein paar Ausnahmen: Ben letzte Woche am Mittwoch nicht dabei, Tom kommt nächste Woche Freitag mit
+  const last = addDays(mondayOf(todayIso()), -7);
+  const next = addDays(mondayOf(todayIso()), 7);
+  s.days[addDays(last, 2)] = { people: { [ben.id]: { hin: false, rueck: false, at: 1 } } };
+  s.days[addDays(next, 4)] = { people: { [tom.id]: { hin: true, rueck: true, at: 1 } } };
+  s.ui.me = me.id;
   return s;
 }

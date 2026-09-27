@@ -19,7 +19,7 @@ export function weeklyDebts(weeks, opts = {}, roundTrip = true, until = '9999-12
     const entries = [];
     for (const [date, d] of Object.entries(w.days)) {
       if (date > until) continue; // geplante Fahrten in der Zukunft sind noch nicht fällig
-      for (const dir of dirs) if (d[dir]) entries.push({ trip: d[dir], snap: w.snap, date, direction: dir });
+      for (const dir of dirs) if (d[dir]) entries.push({ trip: d[dir], snap: d[dir].snap || w.snap, date, direction: dir });
     }
     if (!entries.length) continue;
     const agg = aggregate(entries, opts);

@@ -4,55 +4,39 @@ Eine Website für Fahrgemeinschaften: Strecke mit Zwischenstopps planen, aktuell
 
 ## Funktionen
 
-Gestaltet nach Apples Human Interface Guidelines: Systemschrift, gruppierte Listen, Milchglas-Leisten, Hell/Dunkel automatisch.
-Auf dem Handy Tab-Leiste unten, auf Tablet/Computer Seitenleiste; die Karte lässt sich ein- und ausblenden.
+Gestaltet nach Apples Human Interface Guidelines (Systemschrift, gruppierte Listen, Milchglas-Leisten, Hell/Dunkel).
+Handy: Tab-Leiste unten · Tablet/Computer: Seitenleiste · Karte ein-/ausblendbar.
 
-**Übersicht** – was du noch zahlen musst bzw. bekommst, diese Woche, Kosten pro Fahrt, Spritpreis, beste Tankzeit, deine nächsten Fahrten; beim Einstieg eine Schritt-für-Schritt-Liste.
+### Zwei Rollen
 
-**Fahrten**
-- **Meine Tage**: für die nächsten 4 Wochen vorausschauend antippen, an welchen Tagen man mitfährt
-- Wochenplan mit Hin-/Rückfahrt, Personen per Tipp an- und abwählen, Fahrer pro Fahrt
-- **Aus Regelplan füllen** (feste Tage je Person), „Wie Vorwoche“; Tage in der Zukunft sind „geplant“ und werden erst ab dem Tag abgerechnet
-- Teilstrecken: automatisch aus den Adressen oder von Hand
+**Admin** (wer die Fahrgemeinschaft erstellt; Admin-Rechte lassen sich teilen) – volle Kontrolle:
+- Ziel und Startadresse, **automatisch beste Abholreihenfolge** (Routenplaner), von Hand änderbar; Rückfahrt-Reihenfolge
+- Auto, Spritpreis (live an der Strecke), Aufteilungsregel, Mitfahrer (auch ohne App), pausieren statt löschen
+- Jeden Tag bearbeiten: wer fährt, anderer Fahrer, freier Tag
+- Alle offenen Beträge, als bezahlt markieren, Nachricht/PayPal-Link kopieren
+- **Mitglieder & Rechte** (Admin geben/nehmen, entfernen, neuer Einladungslink) und **Änderungsprotokoll** (wer hat was wann geändert)
 
-**Abrechnung**
-- Offene Beträge über mehrere Wochen, bezahlt abhaken, Nachricht + PayPal-Link kopieren
-- Zeitraum Woche/Monat/alles/frei, Anteil pro Person, Ausgleich, alle Werte im Überblick, Nebenkosten an/aus
+**Mitfahrer** – einfach und geführt:
+- Einstieg Schritt für Schritt: Wer bist du? → Abholadresse → Regelplan
+- **Übersicht:** eigene Kosten, direkter **PayPal-Knopf** mit dem offenen Betrag, Preis pro Fahrt, nächste Fahrten (Hin & Zurück zu einem Tag zusammengefasst)
+- **Fahrten:** eigener Regelplan; Farbkalender (jede Person eine Farbe, oben Hin / unten Zurück); Tag antippen → einzeln an-/absagen
+- **Kosten:** offene Wochen, „Ich habe bezahlt“, „Wie berechnet?“ nur auf Wunsch
+- Einstellung **Einfach / Detailliert** (Standard: einfach)
 
-**Strecke**
-- Start, Zwischenstopps, Ziel mit Adresssuche oder per Tipp in die Karte; Marker ziehen, auf die Route tippen für Zwischenstopps
-- Adressen Personen zuordnen (zahlen hin ab / zurück bis zu ihrer Adresse), eigene Reihenfolge für die Rückfahrt
-- Spritpreis & Tankzeit: Live-Preise an der Strecke (Tankerkönig), beste Tankzeit
+### Wie die App rechnet
 
-**Einstellungen**
-- Fahrgemeinschaft & Konto, **„Das bin ich“**
-- **Mitfahrer**: aktiv/inaktiv (statt löschen), feste Tage (Regelplan), PayPal, Farbe
-- Auto (Verbrauch, Kraftstoff, Nebenkosten pro km), Aufteilungsregel, Daten (Beispiel, Export/Import, Zurücksetzen)
+- Wer an einem Tag fährt = **Regelplan** (gilt ab dem Tag der Änderung) + **einzelne Tagesänderungen** (die jüngere Änderung gewinnt)
+- Route je Fahrt: Start des Fahrers → Abholadressen der Mitfahrer dieses Tages (in Abholreihenfolge) → Ziel; wer nicht mitfährt, wird nicht angefahren
+- Jede Teilstrecke wird unter denen geteilt, die dort im Auto sitzen → man zahlt ab der eigenen Adresse
+- Abgeschlossene Wochen werden mit ihren Werten (Preis, Verbrauch, Adressen) eingefroren; geplante Fahrten werden erst ab dem Tag fällig
 
-## Fahrgemeinschaft mit Login (optional)
+## Fahrgemeinschaft mit Login
 
-Über den Knopf **👤 Anmelden** oben rechts:
+Technik: [Supabase](https://supabase.com) (Anmeldung, Datenbank, Live-Updates). Die Rechte werden auf dem Server durchgesetzt:
+gemeinsame Daten ändern nur Admins; Mitfahrer schreiben nur ihr eigenes Profil (Adresse, Regelplan, Tage, „bezahlt“); das Protokoll lesen nur Admins.
 
-- Konto mit E-Mail und Passwort anlegen
-- **Fahrgemeinschaft anlegen** (die bisherigen eigenen Daten können mitgenommen werden) und den **Einladungslink** an die Kollegen schicken
-- Jeder **beansprucht seinen Namen** („Wer bist du?“ auf der Übersicht bzw. „Das bin ich“) – ein Name kann nur einem Konto gehören. Dann zeigt die Übersicht „Du musst noch … zahlen“ und jeder kann selbst abhaken, was er bezahlt hat (mit „abgehakt von …“) und seine Tage planen
-- Änderungen werden sofort gespeichert und bei allen live aktualisiert (ohne Live-Verbindung spätestens nach ~15 s); ändern zwei gleichzeitig, gehen beide Änderungen nicht verloren
-- „Nur lokal arbeiten“ schaltet zurück auf die eigenen Daten dieses Geräts
-
-Technik: [Supabase](https://supabase.com) (Anmeldung + Datenbank). Einrichtung einmalig: `supabase/setup.sql` im SQL Editor ausführen und unter Authentication → Email „Confirm email“ ausschalten
-(der eingebaute Mailversand von Supabase erreicht nur Mitglieder des Supabase-Teams). Ohne Anmeldung bleibt alles wie bisher nur im Browser.
-
-## So wird fair gerechnet
-
-Jede Fahrt besteht aus Teilstrecken (Start → Stopp → … → Ziel). Die Kosten einer Teilstrecke
-(`km × Verbrauch/100 × Preis`, plus optional Zusatzkosten) werden gleichmäßig auf alle verteilt, die auf dieser Teilstrecke im Auto sitzen.
-Der Fahrer ist immer dabei. Wer die Fahrt fährt, hat den Sprit bezahlt – daraus ergibt sich, wer wem etwas schuldet.
-
-Beispiel: Karlsruhe → Pforzheim (32 km) → Stuttgart (49 km). Ich und Anna ab Karlsruhe, Ben steigt in Pforzheim zu.
-Die erste Teilstrecke teilen sich 2 Personen, die zweite 3 – Ben zahlt nur ab Pforzheim.
-
-Sind Adressen Personen zugeordnet, ergeben sich die Teilstrecken automatisch aus den Adressen der Mitfahrenden des Tages
-(Hinweg: ab der eigenen Adresse, Rückweg: bis zur eigenen Adresse). Ohne Zuordnung werden die Teilstrecken im Wochenplan von Hand gepflegt.
+Einrichtung einmalig: `supabase/setup.sql` im SQL Editor ausführen (bei Nachfrage „Run without RLS“ – das Skript schaltet RLS selbst ein)
+und unter Authentication → Email „Confirm email“ ausschalten (der eingebaute Mailversand erreicht nur Mitglieder des Supabase-Teams).
 
 ## Starten
 
@@ -92,27 +76,25 @@ Testet die Rechenlogik (Kosten, Teilstrecken-Aufteilung, Ausgleichszahlungen, Ka
 ## Aufbau
 
 ```
-index.html          Seite (Seitenleiste, Titelzeile, Ansicht, Karte, Tab-Leiste)
-css/style.css       Gestaltung im Apple-Stil (hell/dunkel, Handy/Tablet/Computer)
-js/app.js           Start, Navigation, Karte, Strecken-Ansicht, Routenberechnung
-js/view-home.js     Übersicht
-js/tab-trips.js     Fahrten: Wochenplan, Regelplan, Meine Tage
-js/tab-bill.js      Abrechnung, offene Beträge
-js/tab-fuel.js      Auto, Spritpreis, Tankstellen, beste Tankzeit
-js/view-settings.js Einstellungen, Mitfahrer
-js/account.js       Konto & Fahrgemeinschaft (Oberfläche)
-js/cloud.js         Supabase: Anmeldung, Gruppen, Speichern, Live-Updates
-js/sync.js          Synchronisation mit Konfliktbehandlung (getestet)
-js/calc.js          Rechenlogik (ohne DOM, getestet)
-js/plan.js          Aktiv/inaktiv, Regelplan (getestet)
+index.html          Seite (Seitenleiste, Titelzeile, Ansicht, Karte, Tab-Leiste, Dialoge)
+css/style.css       Gestaltung im Apple-Stil
+js/app.js           Start, Navigation je Rolle, Karte, Strecke (Admin), Hintergrund-Berechnungen
+js/view-home.js     Übersicht, Willkommen, geführte Einrichtung
+js/view-trips.js    Regelplan, Farbkalender, Tag bearbeiten
+js/view-costs.js    Kosten (einfach/detailliert), bezahlen
+js/view-settings.js Profil, Ansicht, Mitfahrer, Mitglieder & Rechte, Protokoll
+js/actions.js       Alle Änderungen: Rechte, Speicherort (Profil/gemeinsam), Protokoll
+js/model.js         Datenmodell: Regelplan, Tage, Profile zusammenführen, Strecke je Fahrt (getestet)
+js/derived.js       Berechnete Werte für die Ansichten
+js/calc.js          Kosten & Aufteilung (getestet)
 js/debts.js         Offene Beträge je Woche (getestet)
+js/sync.js          Synchronisation mit Konfliktbehandlung (getestet)
+js/account.js       Konto, Fahrgemeinschaft, Rollen, Profile
+js/cloud.js         Supabase-Anbindung
 js/pay.js           PayPal.me-Links und Nachrichten (getestet)
-js/fueltimes.js     Beste Tankzeit
-js/map.js           Leaflet-Karte
-js/api.js           Photon, OSRM, Tankerkönig
-js/state.js         Zustand & Speicherung
-js/icons.js         Symbole (Lucide, ISC-Lizenz)
-js/ui.js, version.js, example.js
-supabase/setup.sql  Datenbank-Einrichtung
+js/tab-fuel.js      Auto, Spritpreis, Tankstellen, beste Tankzeit
+js/address.js       Adresssuche
+js/map.js, api.js, state.js, icons.js, ui.js, version.js, example.js, fueltimes.js
+supabase/setup.sql  Datenbank: Tabellen, Rollen, Zugriffsregeln, Funktionen
 tests/              Tests (node --test)
 ```

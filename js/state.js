@@ -1,38 +1,44 @@
 // Zustand der App + Speicherung im Browser (localStorage).
-import { mondayOf, toISODate, routeKey } from './calc.js';
+import { mondayOf, toISODate } from './calc.js';
+import { buildModel, migrateV1, liveWeekSnap, isActive } from './model.js';
 
 const KEY = 'tankrechner:v1';
 
-export const COLORS = ['#2563eb', '#db2777', '#16a34a', '#ea580c', '#7c3aed', '#0891b2', '#ca8a04', '#dc2626'];
+export const COLORS = ['#007aff', '#ff2d55', '#34c759', '#ff9500', '#af52de', '#30b0c7', '#ffcc00', '#5856d6', '#a2845e', '#ff3b30'];
 
 export const uid = () => Math.random().toString(36).slice(2, 10);
+export const todayIso = () => toISODate(new Date());
 
 export function defaultState() {
-  const me = { id: uid(), name: 'Ich', color: COLORS[0] };
+  const me = { id: uid(), name: 'Ich', color: COLORS[0], active: true, plan: [] };
   return {
-    version: 1,
+    schema: 2,
+    // ---- gemeinsam (in der Fahrgemeinschaft; ändern nur Admins) ----
     persons: [me],
-    defaultDriver: me.id,
-    stops: [
-      { id: uid(), label: '', lat: null, lng: null },
-      { id: uid(), label: '', lat: null, lng: null },
-    ],
+    defaultDriver: me.id,          // wer fährt (Auto, Startadresse)
+    destination: null,             // Ziel { label, lat, lng }
     roundTrip: true,
-    manualKm: null,
-    returnOrder: null, // Stopp-IDs für die Rückfahrt (null = umgekehrt wie Hinweg)
-    route: null,
-    returnRoute: null,
-    routeCache: {}, // berechnete Routen je Stoppfolge (für ausgelassene Adressen)
-    alternatives: [],
+    manualKm: null,                // Kilometer, falls ohne Karte
+    order: null,                   // Abholreihenfolge von Hand (Personen-IDs), sonst berechnet
+    optimizedOrder: null,          // beste Abholreihenfolge (berechnet)
+    returnOrder: null,             // Absetz-Reihenfolge von Hand, sonst umgekehrt
+    route: null,                   // ganze Route (für die Karte)
+    routeCache: {},                // berechnete Teilstrecken je Stoppfolge
     car: { consumption: 6.5, fuel: 'e10', extraPerKm: 0 },
     price: { mode: 'cheapest', manual: 1.75, current: null, stationId: null, stationName: '', updatedAt: null },
+    split: { mode: 'segment', driverPays: true, includeExtra: true },
+    days: {},                      // Tages-Änderungen des Admins { datum: { off, driver: {hin, rueck}, people: { id: {hin, rueck, at} } } }
+    weeks: {},                     // eingefrorene Werte abgeschlossener Wochen { montag: { snap } }
+    payments: {},                  // bezahlt { 'Woche|von|an': { amount, at, by } | { revoked, at, by } }
+    setupDone: false,
+    // ---- nur auf diesem Gerät ----
     apiKey: '',
     stations: [],
     observations: [],
-    split: { mode: 'segment', driverPays: true, includeExtra: true },
-    weeks: {},
-    payments: {}, // bezahlte Ausgleichszahlungen: { 'Woche|von|an': { amount, at } }
-    ui: { tab: 'route', week: mondayOf(toISODate(new Date())), showWeekend: false, period: 'week', from: '', to: '' },
+    localRoutes: {},
+    profiles: [],                  // Profile der Mitfahrer (aus der Fahrgemeinschaft geladen)
+    log: [],                       // Änderungsprotokoll ohne Fahrgemeinschaft
+    ui: { tab: 'home', week: mondayOf(todayIso()), showWeekend: false, detail: 'simple', me: null, routeSub: 'route', welcomeDone: false },
   };
 }
 
@@ -40,9 +46,10 @@ function load() {
   try {
     const raw = localStorage.getItem(KEY);
     if (!raw) return defaultState();
-    const s = JSON.parse(raw);
+    let s = JSON.parse(raw);
+    if (!(s.schema >= 2)) s = migrateV1(s, todayIso());
     const d = defaultState();
-    return { ...d, ...s, car: { ...d.car, ...s.car }, price: { ...d.price, ...s.price }, split: { ...d.split, ...s.split }, ui: { ...d.ui, ...s.ui } };
+    return { ...d, ...s, car: { ...d.car, ...s.car }, price: { ...d.price, ...s.price }, split: { ...d.split, ...s.split }, ui: { ...d.ui, ...s.ui, welcomeDone: s.ui?.welcomeDone ?? true } };
   } catch {
     return defaultState();
   }
@@ -50,14 +57,15 @@ function load() {
 
 const listeners = new Set();
 export let state = load();
+let rev = 0; // Änderungszähler (für zwischengespeicherte Berechnungen)
 
 export function save() {
   try { localStorage.setItem(KEY, JSON.stringify(state)); } catch { /* Speicher voll o. ä. */ }
 }
 
-/** Daten, die in einer Fahrgemeinschaft geteilt werden (Rest bleibt pro Gerät: Ansicht, API-Key, Messwerte …). */
-export const SHARED_KEYS = ['persons', 'defaultDriver', 'stops', 'roundTrip', 'manualKm', 'returnOrder', 'route', 'returnRoute',
-  'routeCache', 'car', 'price', 'split', 'weeks', 'payments'];
+/** Daten, die in einer Fahrgemeinschaft geteilt werden (Rest bleibt pro Gerät). */
+export const SHARED_KEYS = ['schema', 'persons', 'defaultDriver', 'destination', 'roundTrip', 'manualKm', 'order', 'optimizedOrder', 'returnOrder',
+  'route', 'routeCache', 'car', 'price', 'split', 'days', 'weeks', 'payments', 'setupDone', 'setupCar', 'optimizedFor'];
 
 export function sharedData(s = state) {
   const o = {};
@@ -69,114 +77,75 @@ let changeHook = null;
 /** Wird bei jeder Änderung mit der Änderungsfunktion aufgerufen (für die Synchronisation). */
 export function onChange(fn) { changeHook = fn; }
 
+const notify = () => { rev++; listeners.forEach((l) => l(state)); };
+
 /** Zustand ändern. render=false, wenn gerade getippt wird und nichts neu gezeichnet werden soll. */
 export function update(fn, { render = true } = {}) {
   fn(state);
+  rev++;
   save();
   changeHook?.(fn);
-  if (render) listeners.forEach((l) => l(state));
+  if (render) notify();
 }
 
 export function replaceState(next) {
   const d = defaultState();
-  state = { ...d, ...next, ui: { ...d.ui, ...(next.ui || {}) } };
+  let n = next;
+  if (!(n.schema >= 2)) n = migrateV1(n, todayIso());
+  state = { ...d, ...n, ui: { ...d.ui, ...(n.ui || {}), welcomeDone: true } };
   save();
-  // Für die Synchronisation als Änderung der gemeinsamen Daten melden
   const shared = structuredClone(sharedData(state));
   changeHook?.((s) => { Object.assign(s, structuredClone(shared)); });
-  listeners.forEach((l) => l(state));
+  notify();
 }
 
 /** Serverstand der gemeinsamen Daten übernehmen, danach offene eigene Änderungen erneut anwenden. */
 export function applyRemote(data, replay = []) {
   const d = defaultState();
+  let src = data;
+  if (src && Object.keys(src).length && !(src.schema >= 2)) src = migrateV1(src, todayIso());
   const next = { ...state };
-  for (const k of SHARED_KEYS) next[k] = data[k] !== undefined ? structuredClone(data[k]) : d[k];
+  for (const k of SHARED_KEYS) next[k] = src[k] !== undefined ? structuredClone(src[k]) : d[k];
   state = next;
   for (const fn of replay) {
     try { fn(state); } catch { /* Änderung passt nicht mehr zum neuen Stand – überspringen */ }
   }
   save();
-  listeners.forEach((l) => l(state));
+  notify();
+}
+
+/** Profile der Mitfahrer setzen (nur auf diesem Gerät). */
+export function setProfiles(profiles) {
+  state.profiles = profiles;
+  save();
+  notify();
 }
 
 export function subscribe(fn) { listeners.add(fn); }
 
 // ---------- Abgeleitete Werte ----------
 
-export const validStops = (s = state) => s.stops.filter((x) => x.lat != null && x.lng != null);
+let cached = { rev: -1, model: null };
+/** Das zusammengeführte Modell (Personen, wer fährt wann …). */
+export function model() {
+  if (cached.rev !== rev || cached.state !== state) cached = { rev, state, model: buildModel(state, state.profiles || []) };
+  return cached.model;
+}
+
+export const persons = () => model().persons;
+export const activePersons = () => model().persons.filter(isActive);
+export const personById = (id) => model().byId.get(id);
 
 export function effectivePrice(s = state) {
   if (s.price.mode !== 'manual' && s.price.current > 0) return s.price.current;
   return Number(s.price.manual) || 0;
 }
 
-export function stopName(stop, i, n) {
-  if (stop.label) return stop.label.split(',')[0];
-  return i === 0 ? 'Start' : i === n - 1 ? 'Ziel' : `Stopp ${i}`;
-}
+/** Aktuelle Wochenwerte (für laufende und künftige Wochen). */
+export const liveSnap = () => liveWeekSnap(state, model().persons, effectivePrice());
 
-/** Teilstrecken der aktuellen Route (km). */
-export function currentLegs(s = state) {
-  const stops = validStops(s);
-  if (s.route && s.route.legs.length === stops.length - 1) {
-    return s.route.legs.map((l, i) => ({
-      from: stopName(stops[i], i, stops.length),
-      to: stopName(stops[i + 1], i + 1, stops.length),
-      km: Math.round(l.distance / 100) / 10,
-      min: l.duration / 60,
-    }));
-  }
-  if (s.manualKm > 0) return [{ from: 'Start', to: 'Ziel', km: Number(s.manualKm) }];
-  return [];
-}
+/** Alle berechneten Teilstrecken (gemeinsam + auf diesem Gerät). */
+export const allRoutes = () => ({ ...(state.routeCache || {}), ...(state.localRoutes || {}) });
 
-/** Reihenfolge der Stopps auf der Rückfahrt (IDs). Beginnt immer am Ziel des Hinwegs. */
-export function returnOrderIds(s = state) {
-  const ids = validStops(s).map((x) => x.id);
-  const reversed = [...ids].reverse();
-  const saved = (s.returnOrder || []).filter((id) => ids.includes(id));
-  if (saved.length !== ids.length || saved[0] !== reversed[0]) return reversed;
-  return saved;
-}
-
-export const isCustomReturn = (s = state) => returnOrderIds(s).join() !== validStops(s).map((x) => x.id).reverse().join();
-
-export function returnStops(s = state) {
-  const byId = new Map(validStops(s).map((x) => [x.id, x]));
-  return returnOrderIds(s).map((id) => byId.get(id));
-}
-
-const kmLegs = (route) => route.legs.map((l) => ({ km: Math.round(l.distance / 100) / 10, min: l.duration / 60 }));
-
-/** Momentaufnahme der Einstellungen – damit alte Wochen stabil abgerechnet bleiben. */
-export function makeSnapshot(s = state) {
-  const valid = validStops(s);
-  const stops = valid.map((x, i) => ({ id: x.id, name: stopName(x, i, valid.length), lat: x.lat, lng: x.lng, owners: [...(x.owners || [])] }));
-  const routes = {};
-  if (stops.length >= 2 && s.route?.legs.length === stops.length - 1) routes[routeKey(stops)] = kmLegs(s.route);
-  const back = returnStops(s);
-  if (back.length >= 2 && s.returnRoute?.legs.length === back.length - 1) routes[routeKey(back)] = kmLegs(s.returnRoute);
-  else if (!isCustomReturn(s) && routes[routeKey(stops)]) routes[routeKey(back)] = [...routes[routeKey(stops)]].reverse(); // wie bisher: Rückweg = Hinweg umgekehrt
-  return {
-    stops,
-    returnOrder: returnOrderIds(s),
-    routes,
-    legs: currentLegs(s),
-    consumption: Number(s.car.consumption) || 0,
-    price: effectivePrice(s),
-    extraPerKm: Number(s.car.extraPerKm) || 0,
-    fuel: s.car.fuel,
-    roundTrip: s.roundTrip,
-    at: Date.now(),
-  };
-}
-
-export function getWeek(monday, create = false) {
-  if (!state.weeks[monday] && create) state.weeks[monday] = { snap: makeSnapshot(), days: {} };
-  return state.weeks[monday];
-}
-
-export function personById(id) {
-  return state.persons.find((p) => p.id === id);
-}
+/** Eingefrorene Werte je Woche. */
+export const frozenWeeks = () => Object.fromEntries(Object.entries(state.weeks || {}).filter(([, w]) => w?.snap?.v === 2).map(([m, w]) => [m, w.snap]));
