@@ -42,6 +42,12 @@ gemeinsame Daten ändern nur Admins; Mitfahrer schreiben nur ihr eigenes Profil 
 Einrichtung einmalig: `supabase/setup.sql` im SQL Editor ausführen (bei Nachfrage „Run without RLS“ – das Skript schaltet RLS selbst ein)
 und unter Authentication → Email „Confirm email“ ausschalten (der eingebaute Mailversand erreicht nur Mitglieder des Supabase-Teams).
 
+**Passwort vergessen** (optional, braucht E-Mail-Versand):
+1. Authentication → URL Configuration: „Site URL“ auf die Adresse der Seite setzen (z. B. `https://axor7.github.io/tankrechner/`) und dieselbe Adresse unter „Redirect URLs“ eintragen.
+2. Authentication → Emails → SMTP Settings: einen eigenen Mailversand eintragen (z. B. kostenlos über Brevo oder Resend). Ohne eigenen Versand kommen die Mails nur bei Mitgliedern des Supabase-Teams an, höchstens ein paar pro Stunde.
+
+Angemeldet kann man das Passwort jederzeit im Konto-Dialog unter „Passwort ändern“ neu setzen.
+
 ## Starten
 
 Es ist eine reine statische Website (HTML/CSS/JavaScript, keine Installation, kein Server-Code).

@@ -10,7 +10,8 @@ const LIB = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/+esm';
 let clientPromise;
 export function client() {
   clientPromise ||= import(LIB).then(({ createClient }) => createClient(SUPABASE_URL, SUPABASE_KEY, {
-    auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: false, storageKey: 'tankrechner-auth' },
+    // implicit: der Link aus der „Passwort vergessen“-Mail funktioniert so auch auf einem anderen Gerät
+    auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: false, flowType: 'implicit', storageKey: 'tankrechner-auth' },
   }));
   return clientPromise;
 }
@@ -27,7 +28,11 @@ function explain(error) {
   if (/User already registered/i.test(m)) return 'Für diese E-Mail gibt es schon ein Konto – bitte anmelden.';
   if (/Password should be at least/i.test(m)) return 'Das Passwort muss mindestens 6 Zeichen haben.';
   if (/Email not confirmed/i.test(m)) return 'E-Mail noch nicht bestätigt. (Tipp für den Admin: in Supabase „Confirm email“ ausschalten.)';
-  if (/rate limit/i.test(m)) return 'Zu viele Versuche – bitte kurz warten.';
+  if (/email rate limit/i.test(m)) return 'Gerade wurden zu viele E-Mails verschickt – bitte später noch einmal versuchen.';
+  if (/rate limit|only request this after/i.test(m)) return 'Zu viele Versuche – bitte kurz warten.';
+  if (/should be different from the old/i.test(m)) return 'Das neue Passwort muss sich vom alten unterscheiden.';
+  if (/Error sending recovery email|sending .*email/i.test(m)) return 'Die E-Mail konnte nicht verschickt werden. (Admin: in Supabase einen eigenen E-Mail-Versand (SMTP) einrichten.)';
+  if (/Auth session missing/i.test(m)) return 'Der Link ist abgelaufen – bitte „Passwort vergessen“ noch einmal anfordern.';
   if (/relation .* does not exist|Could not find the (table|function)/i.test(m)) return 'Die Datenbank ist noch nicht eingerichtet (supabase/setup.sql ausführen).';
   if (/Failed to fetch|NetworkError|Load failed/i.test(m)) return 'Keine Verbindung zum Server.';
   return m;
@@ -64,6 +69,33 @@ export async function signUp(email, password, name) {
 export async function signIn(email, password) {
   const sb = await client();
   return (await run(sb.auth.signInWithPassword({ email, password }))).user;
+}
+
+/** Mail mit Link zum Zurücksetzen schicken. Der Link führt zurück auf diese Seite. */
+export async function requestPasswordReset(email) {
+  const sb = await client();
+  await run(sb.auth.resetPasswordForEmail(email, { redirectTo: `${location.origin}${location.pathname}` }));
+}
+
+/**
+ * Kommt man über den Link aus der Mail? Dann steht die Anmeldung im #-Teil der Adresse.
+ * → 'recovery' (angemeldet, neues Passwort festlegen), { error } (Link ungültig/abgelaufen) oder null
+ */
+export async function handleAuthRedirect(hash) {
+  const q = new URLSearchParams(String(hash || '').replace(/^#/, ''));
+  if (q.get('error_description') || q.get('error_code')) {
+    const expired = /expired|invalid/i.test(`${q.get('error_code')} ${q.get('error_description')}`);
+    return { error: expired ? 'Der Link ist abgelaufen oder wurde schon benutzt – bitte „Passwort vergessen“ noch einmal anfordern.' : q.get('error_description') };
+  }
+  if (q.get('type') !== 'recovery' || !q.get('access_token') || !q.get('refresh_token')) return null;
+  const sb = await client();
+  await run(sb.auth.setSession({ access_token: q.get('access_token'), refresh_token: q.get('refresh_token') }));
+  return 'recovery';
+}
+
+export async function updatePassword(password) {
+  const sb = await client();
+  await run(sb.auth.updateUser({ password }));
 }
 
 export async function signOut() {

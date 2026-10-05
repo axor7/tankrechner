@@ -22,6 +22,10 @@ let authMode = 'login';
 let error = '';
 let busy = false;
 let pendingJoin = null;
+let recovering = false;       // über den Link aus der „Passwort vergessen“-Mail gekommen
+let changingPassword = false;
+let resetSent = '';
+let lastEmail = '';
 let live = false;
 
 const sync = createSync({
@@ -240,9 +244,63 @@ async function act(fn) {
   renderDialog();
 }
 
+function forgotView() {
+  let email = lastEmail;
+  if (resetSent) {
+    return h('div', { class: 'acc-form' },
+      h('p', { class: 'callout good' }, `Falls es ein Konto für ${resetSent} gibt, ist jetzt eine E-Mail mit einem Link unterwegs. Öffne den Link und lege ein neues Passwort fest.`),
+      h('p', { class: 'hint small' }, 'Keine Mail da? Schau im Spam-Ordner nach. Der Link gilt eine Stunde.'),
+      h('button', { type: 'button', class: 'btn full', onclick: () => { authMode = 'login'; resetSent = ''; error = ''; renderDialog(); } }, 'Zurück zur Anmeldung'));
+  }
+  return h('form', {
+    class: 'acc-form',
+    onsubmit: (e) => {
+      e.preventDefault();
+      act(async () => { await cloud.requestPasswordReset(email.trim()); resetSent = email.trim(); });
+    },
+  },
+    h('p', { class: 'hint' }, 'Gib deine E-Mail-Adresse ein. Du bekommst einen Link, mit dem du ein neues Passwort festlegen kannst.'),
+    h('label', { class: 'field' }, 'E-Mail', h('input', { type: 'email', required: true, autocomplete: 'email', value: email, oninput: (e) => { email = e.target.value; lastEmail = email; } })),
+    h('button', { type: 'submit', class: 'btn btn-primary full', disabled: busy }, busy ? 'Einen Moment …' : 'Link schicken'),
+    h('button', { type: 'button', class: 'link', style: { alignSelf: 'center' }, onclick: () => { authMode = 'login'; error = ''; renderDialog(); } }, 'Zurück zur Anmeldung'),
+  );
+}
+
+/** Neues Passwort festlegen – nach dem Link aus der Mail (recovery) oder angemeldet über „Passwort ändern“. */
+function newPasswordView(recovery) {
+  let pw = '';
+  let pw2 = '';
+  return h('form', {
+    class: 'acc-form',
+    onsubmit: (e) => {
+      e.preventDefault();
+      if (pw !== pw2) { error = 'Die beiden Passwörter stimmen nicht überein.'; renderDialog(); return; }
+      act(async () => {
+        await cloud.updatePassword(pw);
+        changingPassword = false;
+        toast('Neues Passwort gespeichert', 'ok');
+        if (recovery) {
+          recovering = false;
+          groups = await cloud.myGroups();
+          if (groups.length === 1 && !inGroup()) await activate(groups[0].id, groups[0].name, groups[0].personId, groups[0].role);
+          renderButton();
+          if (inGroup()) dialog().close();
+        }
+      });
+    },
+  },
+    recovery ? h('p', { class: 'hint' }, `Lege ein neues Passwort für ${user?.email || 'dein Konto'} fest.`) : null,
+    h('label', { class: 'field' }, 'Neues Passwort', h('input', { type: 'password', required: true, minlength: 6, autocomplete: 'new-password', oninput: (e) => { pw = e.target.value; } })),
+    h('label', { class: 'field' }, 'Noch einmal', h('input', { type: 'password', required: true, minlength: 6, autocomplete: 'new-password', oninput: (e) => { pw2 = e.target.value; } })),
+    h('button', { type: 'submit', class: 'btn btn-primary full', disabled: busy }, busy ? 'Einen Moment …' : 'Passwort speichern'),
+    !recovery ? h('button', { type: 'button', class: 'link', style: { alignSelf: 'center' }, onclick: () => { changingPassword = false; error = ''; renderDialog(); } }, 'Abbrechen') : null,
+  );
+}
+
 function authView() {
+  if (authMode === 'forgot') return forgotView();
   let name = '';
-  let email = '';
+  let email = lastEmail;
   let password = '';
   const register = authMode === 'register';
   return h('form', {
@@ -265,9 +323,10 @@ function authView() {
     ),
     pendingJoin ? h('p', { class: 'callout good' }, 'Du wurdest in eine Fahrgemeinschaft eingeladen. Leg kurz ein Konto an (oder melde dich an) – dann bist du dabei.') : null,
     register ? h('label', { class: 'field' }, 'Dein Name', h('input', { type: 'text', required: true, autocomplete: 'name', oninput: (e) => { name = e.target.value; } })) : null,
-    h('label', { class: 'field' }, 'E-Mail', h('input', { type: 'email', required: true, autocomplete: 'email', oninput: (e) => { email = e.target.value; } })),
+    h('label', { class: 'field' }, 'E-Mail', h('input', { type: 'email', required: true, autocomplete: 'email', value: email, oninput: (e) => { email = e.target.value; lastEmail = email; } })),
     h('label', { class: 'field' }, 'Passwort', h('input', { type: 'password', required: true, minlength: 6, autocomplete: register ? 'new-password' : 'current-password', oninput: (e) => { password = e.target.value; } })),
     h('button', { type: 'submit', class: 'btn btn-primary full', disabled: busy }, busy ? 'Einen Moment …' : register ? 'Konto anlegen' : 'Anmelden'),
+    !register ? h('button', { type: 'button', class: 'link', style: { alignSelf: 'center' }, onclick: () => { authMode = 'forgot'; resetSent = ''; error = ''; renderDialog(); } }, 'Passwort vergessen?') : null,
     h('p', { class: 'hint small' }, 'Mit Konto teilt ihr eine Fahrgemeinschaft. Ohne Anmeldung bleibt alles nur in diesem Browser.'),
   );
 }
@@ -365,10 +424,12 @@ function renderDialog() {
   if (!d) return;
   d.replaceChildren(h('div', { class: 'acc' },
     h('div', { class: 'row between' },
-      h('h2', {}, user ? 'Konto & Fahrgemeinschaft' : authMode === 'register' ? 'Konto anlegen' : 'Anmelden'),
+      h('h2', {}, recovering || changingPassword ? 'Neues Passwort' : user ? 'Konto & Fahrgemeinschaft' : authMode === 'register' ? 'Konto anlegen' : authMode === 'forgot' ? 'Passwort vergessen' : 'Anmelden'),
       h('button', { type: 'button', class: 'icon-btn tinted', 'aria-label': 'Schließen', onclick: () => d.close() }, icon('x', { size: 18 }))),
     error ? h('p', { class: 'acc-error' }, error) : null,
-    user
+    user && (recovering || changingPassword)
+      ? newPasswordView(recovering)
+      : user
       ? [
         h('div', { class: 'row between acc-user' },
           h('span', {}, 'Angemeldet als ', h('strong', {}, cloud.userName(user)), h('span', { class: 'muted small' }, ` (${user.email})`)),
@@ -376,6 +437,7 @@ function renderDialog() {
             type: 'button', class: 'link',
             onclick: () => act(async () => { if (inGroup()) deactivate(); await cloud.signOut(); user = null; groups = []; renderButton(); }),
           }, 'Abmelden')),
+        h('button', { type: 'button', class: 'link', style: { alignSelf: 'flex-start' }, onclick: () => { changingPassword = true; error = ''; renderDialog(); } }, 'Passwort ändern'),
         pendingJoin ? h('div', { class: 'callout good' }, 'Einladung erkannt.', h('button', { type: 'button', class: 'btn btn-small btn-primary', disabled: busy, onclick: () => act(async () => { await doJoin(pendingJoin); d.close(); }) }, 'Jetzt beitreten')) : null,
         inGroup() ? groupView() : h('p', { class: 'hint' }, 'Du arbeitest gerade nur auf diesem Gerät.'),
         groupsView(),
@@ -399,6 +461,12 @@ export async function initAccount() {
   document.getElementById('btn-account').onclick = () => openAccount();
   const mobileBtn = document.getElementById('btn-account-mobile');
   if (mobileBtn) mobileBtn.onclick = () => openAccount();
+  // Link aus der „Passwort vergessen“-Mail?
+  let recovery = null;
+  if (/access_token=|error_description=|error_code=/.test(location.hash)) {
+    try { recovery = await cloud.handleAuthRedirect(location.hash); } catch (e) { recovery = { error: e.message }; }
+    history.replaceState(null, '', location.pathname + location.search);
+  }
   const code = parseJoin(location.hash);
   if (code) {
     pendingJoin = code;
@@ -412,7 +480,7 @@ export async function initAccount() {
   onChange((fn) => { if (isAdmin()) sync.noteLocalChange(fn); });
   renderButton();
 
-  if (cloud.hasStoredSession() || pendingJoin || meta.groupId) {
+  if (cloud.hasStoredSession() || pendingJoin || meta.groupId || recovery === 'recovery') {
     try {
       user = await cloud.getUser();
       cloud.onAuthChange((u) => { user = u; if (!u && inGroup()) deactivate(); renderButton(); });
@@ -424,7 +492,9 @@ export async function initAccount() {
     }
     renderButton();
   }
-  if (pendingJoin) openAccount(user ? undefined : 'register');
+  if (recovery === 'recovery') { recovering = true; openAccount(); }
+  else if (recovery?.error) { openAccount('login'); authMode = 'forgot'; error = recovery.error; renderDialog(); }
+  else if (pendingJoin) openAccount(user ? undefined : 'register');
 
   // Nachschauen, ob jemand anderes etwas geändert hat (falls Live-Updates nicht ankommen)
   let lastPoll = 0;
