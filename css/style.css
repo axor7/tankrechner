@@ -685,3 +685,19 @@ details.more > * + * { margin-top: .6rem; }
 .fc-people { display: flex; flex-wrap: wrap; gap: .3rem .8rem; font-size: .82rem; }
 .fc-person { display: inline-flex; align-items: center; gap: .3rem; }
 .fc-person .dot { background: var(--pc); }
+
+/* Zahlung bestätigen */
+.confirm-card { background: var(--surface); border-radius: 14px; padding: .35rem 1rem; box-shadow: 0 0 0 1.5px var(--green) inset, 0 6px 18px rgb(52 199 89 / .12); display: flex; flex-direction: column; }
+.confirm-item { display: flex; gap: .75rem; align-items: flex-start; padding: .8rem 0; }
+.confirm-item + .confirm-item { border-top: .5px solid var(--border); }
+.confirm-item .grow { display: flex; flex-direction: column; gap: .25rem; }
+.confirm-text { font-size: 1rem; line-height: 1.3; }
+.confirm-q { font-size: .88rem; margin-top: .2rem; }
+.confirm-item .row { margin-top: .35rem; }
+.confirm-card:has(.warn:only-child) { box-shadow: 0 0 0 1.5px var(--orange) inset; }
+.btn-no { color: var(--red); }
+.pay-badge { display: inline-flex; align-items: center; gap: .25rem; font-size: .74rem; font-weight: 500; margin-top: .2rem; }
+.pay-badge.pending { color: var(--orange); }
+.pay-badge.rejected { color: var(--red); }
+.debt-weeks li.is-pending > label > strong { color: var(--muted); }
+.confirm-item.warn { color: var(--text); }

@@ -80,6 +80,17 @@ test('Offen, bezahlt, geändert und nach Paaren gruppiert', () => {
   assert.equal(openByPair(withPayments(debts, all)).length, 0);
 });
 
+test('Gemeldet, aber noch nicht bestätigt: bleibt offen, zählt nicht mehr als „zu zahlen“', () => {
+  const debts = weeklyDebts(weeks);
+  const k = payKey('2026-09-14', 'anna', 'me');
+  const items = withPayments(debts, {}, { [k]: { state: 'pending', amount: 10, at: 1 } });
+  const anna = openByPair(items).find((p) => p.from === 'anna');
+  assert.ok(items.find((x) => x.key === k).pending);
+  assert.equal(anna.total, 12.5);
+  assert.equal(anna.pendingTotal, 10);
+  assert.equal(anna.due, 2.5);
+});
+
 test('Geplante Fahrten in der Zukunft sind noch nicht fällig', () => {
   const snap = { legs: [{ km: 100 }], consumption: 5, price: 2 };
   const trip = { driver: 'me', legs: [['me', 'anna']] };

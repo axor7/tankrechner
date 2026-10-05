@@ -1,6 +1,6 @@
 // Berechnete Werte für die Ansichten: Wochen, Kosten, offene Beträge, nächste Fahrten.
 import { state, model, liveSnap, allRoutes, frozenWeeks, todayIso, personById } from './state.js';
-import { deriveWeeks, effectivePayments, tripSnap } from './model.js';
+import { deriveWeeks, effectivePayments, paymentStates, tripSnap } from './model.js';
 import { calcTrip, aggregate, mondayOf, addDays, weekDates, isoWeek, DIRECTIONS } from './calc.js';
 import { weeklyDebts, withPayments, openByPair, payKey } from './debts.js';
 import { fmtDate } from './ui.js';
@@ -35,23 +35,51 @@ export function entries(from, to) {
 }
 
 export const payments = () => effectivePayments(state.payments, state.profiles);
+export const payStates = () => paymentStates(state.payments, state.profiles);
 
 /** Alle Ausgleichszahlungen je Woche (bis heute), mit Bezahlt-Stand. */
 export function debtItems() {
   const t0 = todayIso();
   const ws = weeks(firstMonday(), mondayOf(t0), t0);
-  return withPayments(weeklyDebts(ws, state.split, state.roundTrip !== false, t0), payments());
+  return withPayments(weeklyDebts(ws, state.split, state.roundTrip !== false, t0), payments(), payStates());
 }
 
 export const openPairs = () => openByPair(debtItems());
 
-/** Was ist für mich offen? { owe: [paar], get: [paar], oweTotal, getTotal } */
+/** Was ist für mich offen? oweTotal: noch zu zahlen (ohne gemeldete), pendingOut: gemeldet, wartet auf Bestätigung */
 export function myBalance(me) {
   const pairs = openPairs();
-  const owe = pairs.filter((p) => p.from === me);
+  const owe = pairs.filter((p) => p.from === me && p.due > 0.004);
   const get = pairs.filter((p) => p.to === me);
-  return { owe, get, oweTotal: owe.reduce((a, p) => a + p.total, 0), getTotal: get.reduce((a, p) => a + p.total, 0) };
+  return {
+    owe, get,
+    oweTotal: owe.reduce((a, p) => a + p.due, 0),
+    pendingOut: pairs.filter((p) => p.from === me).reduce((a, p) => a + p.pendingTotal, 0),
+    getTotal: get.reduce((a, p) => a + p.total, 0),
+  };
 }
+
+/**
+ * Gemeldete Zahlungen, die ich bestätigen soll – gruppiert je Zahler und Meldung.
+ * Empfänger bestätigt selbst; hat der Empfänger kein Konto, bestätigt ein Admin.
+ * → [{ from, to, items, total, at }]
+ */
+export function toConfirm(me, { admin = false, hasAccount = () => true } = {}) {
+  const groups = new Map();
+  for (const d of debtItems()) {
+    if (!d.pending) continue;
+    if (d.to !== me && !(admin && !hasAccount(d.to))) continue;
+    const k = `${d.from}|${d.to}|${d.pending.at}`;
+    if (!groups.has(k)) groups.set(k, { from: d.from, to: d.to, items: [], total: 0, at: d.pending.at });
+    const g = groups.get(k);
+    g.items.push(d);
+    g.total = Math.round((g.total + d.open) * 100) / 100;
+  }
+  return [...groups.values()].sort((a, b) => a.at - b.at);
+}
+
+/** Meine Meldungen, die der Empfänger abgelehnt hat (noch nicht erneut gemeldet). */
+export const myRejected = (me) => debtItems().filter((d) => d.rejected && d.from === me);
 
 /** Kosten einer Fahrt (inkl. Anteil je Person). */
 export function tripResult(date, dir) {

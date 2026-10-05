@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildModel, planFor, withPlanVersion, mergePersons, deriveWeeks, liveWeekSnap, tripSnap, effectivePayments, effectiveOrder, migrateV1 } from '../js/model.js';
+import { buildModel, planFor, withPlanVersion, mergePersons, deriveWeeks, liveWeekSnap, tripSnap, effectivePayments, paymentStates, effectiveOrder, migrateV1 } from '../js/model.js';
 import { calcTrip, routeKey } from '../js/calc.js';
 import { weeklyDebts } from '../js/debts.js';
 
@@ -131,17 +131,43 @@ test('Abrechnung über abgeleitete Wochen; eingefrorene Woche behält ihren Prei
   assert.equal(byWeek['2026-09-28'], 10);
 });
 
-test('Zahlungen: Profil-Meldung nur von Beteiligten, Admin kann zurücknehmen', () => {
+test('Zahlungen: Meldung des Zahlers wartet auf Bestätigung, nur Beteiligte zählen', () => {
   const k = '2026-09-21|anna|max';
   const profiles = [
     { personId: 'anna', data: { paid: { [k]: { amount: 7.5, at: 5 } } } },
     { personId: 'ben', data: { paid: { '2026-09-21|clara|max': { amount: 1, at: 5 } } } },
   ];
-  let p = effectivePayments({}, profiles);
-  assert.ok(p[k]);
-  assert.equal(p['2026-09-21|clara|max'], undefined);
-  p = effectivePayments({ [k]: { revoked: true, at: 9 } }, profiles);
-  assert.equal(p[k], undefined);
+  let st = paymentStates({}, profiles);
+  assert.equal(st[k].state, 'pending');
+  assert.equal(st['2026-09-21|clara|max'], undefined);
+  assert.equal(effectivePayments({}, profiles)[k], undefined); // noch nicht bestätigt → weiter offen
+  // Admin (nicht der Zahler) bestätigt / trägt ein → bezahlt
+  st = paymentStates({ [k]: { amount: 7.5, at: 6, pid: 'max' } }, profiles);
+  assert.equal(st[k].state, 'paid');
+  // Admin nimmt zurück
+  assert.equal(effectivePayments({ [k]: { revoked: true, at: 9 } }, profiles)[k], undefined);
+});
+
+test('Zahlungen: Empfänger bestätigt oder lehnt ab; Zahler kann Bestätigtes nicht zurücknehmen', () => {
+  const k = '2026-09-21|anna|max';
+  const anna = (e) => ({ personId: 'anna', data: { paid: { [k]: e } } });
+  const max = (e) => ({ personId: 'max', data: { paid: { [k]: e } } });
+  // bestätigt
+  let st = paymentStates({}, [anna({ amount: 7.5, at: 5 }), max({ amount: 7.5, at: 6 })]);
+  assert.equal(st[k].state, 'paid');
+  // abgelehnt → wieder offen
+  st = paymentStates({}, [anna({ amount: 7.5, at: 5 }), max({ rejected: true, at: 6 })]);
+  assert.equal(st[k].state, 'rejected');
+  assert.equal(effectivePayments({}, [anna({ amount: 7.5, at: 5 }), max({ rejected: true, at: 6 })])[k], undefined);
+  // erneut gemeldet → wartet wieder
+  st = paymentStates({}, [anna({ amount: 7.5, at: 7 }), max({ rejected: true, at: 6 })]);
+  assert.equal(st[k].state, 'pending');
+  // Zahler nimmt nach Bestätigung zurück → bleibt bezahlt
+  st = paymentStates({}, [anna({ revoked: true, at: 8 }), max({ amount: 7.5, at: 6 })]);
+  assert.equal(st[k].state, 'paid');
+  // Admin ist selbst der Zahler → braucht ebenfalls Bestätigung
+  st = paymentStates({ [k]: { amount: 7.5, at: 5, pid: 'anna' } }, []);
+  assert.equal(st[k].state, 'pending');
 });
 
 test('Abholreihenfolge: von Hand > berechnet > Liste; Fahrer nie dabei', () => {

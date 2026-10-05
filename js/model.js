@@ -233,21 +233,47 @@ export function deriveWeeks(model, fromMonday, toMonday, { frozen = {}, live, ro
 // ---------- Zahlungen ----------
 
 /**
- * Wirksame Zahlungen: Admin-Einträge (auch „zurückgenommen“) und „bezahlt“-Meldungen aus Profilen.
- * Eine Profil-Meldung zählt nur, wenn die Person Zahler oder Empfänger ist. Die jüngste Angabe gewinnt.
+ * Stand jeder Zahlung (Schlüssel „Woche|von|an“).
+ * - Der Zahler meldet „bezahlt“ → pending: der Empfänger muss es bestätigen
+ * - Der Empfänger (oder ein Admin für jemand anderen) bestätigt oder trägt selbst ein → paid
+ * - Der Empfänger sagt „nicht erhalten“ → rejected: wieder offen, der Zahler sieht einen Hinweis
+ * Jeweils die jüngste Meldung zählt; eine bestätigte Zahlung kann der Zahler nicht mehr zurücknehmen.
+ * → { [key]: { state, amount, at, by } }
  */
-export function effectivePayments(adminPayments = {}, profiles = []) {
-  const all = {};
-  const put = (key, e) => { all[key] = newer(all[key], e); };
-  for (const [key, e] of Object.entries(adminPayments)) put(key, e);
+export function paymentStates(adminPayments = {}, profiles = []) {
+  const payer = {};
+  const receiver = {};
+  const put = (map, key, e) => { map[key] = newer(map[key], e); };
+  for (const [key, e] of Object.entries(adminPayments)) {
+    const [, from] = key.split('|');
+    put(e?.pid && e.pid === from ? payer : receiver, key, e); // Admin meldet seine eigene Zahlung → braucht auch Bestätigung
+  }
   for (const pr of profiles) {
     for (const [key, e] of Object.entries(pr.data?.paid || {})) {
       const [, from, to] = key.split('|');
-      if (pr.personId === from || pr.personId === to) put(key, { ...e, by: e.by || 'Mitfahrer' });
+      const x = { ...e, by: e.by || 'Mitfahrer' };
+      if (pr.personId === from) put(payer, key, x);
+      else if (pr.personId === to) put(receiver, key, x);
     }
   }
   const out = {};
-  for (const [key, e] of Object.entries(all)) if (e && !e.revoked) out[key] = e;
+  for (const key of new Set([...Object.keys(payer), ...Object.keys(receiver)])) {
+    const p = payer[key];
+    const r = receiver[key];
+    const confirmed = r && !r.revoked && !r.rejected ? { ...r, state: 'paid' } : null;
+    if (r && (!p || (r.at || 0) >= (p.at || 0))) {
+      if (r.rejected) out[key] = { ...r, state: 'rejected', reported: p && !p.revoked ? p : null };
+      else if (confirmed) out[key] = confirmed;
+    } else if (p && !p.revoked) out[key] = { ...p, state: 'pending' };
+    else if (confirmed) out[key] = confirmed;
+  }
+  return out;
+}
+
+/** Nur die bestätigten Zahlungen (für die offenen Beträge). */
+export function effectivePayments(adminPayments = {}, profiles = []) {
+  const out = {};
+  for (const [key, e] of Object.entries(paymentStates(adminPayments, profiles))) if (e.state === 'paid') out[key] = e;
   return out;
 }
 

@@ -8,6 +8,7 @@ import { myBalance, myWeek, nextDays, perTrip, openPairs, dirsNow } from './deri
 import { paypalLink, paypalUser } from './pay.js';
 import { addressInput } from './address.js';
 import { planEditor, openDay } from './view-trips.js';
+import { confirmCard } from './view-costs.js';
 import { FUELS } from './calc.js';
 import { h, fmtEuro, fmtDate, toast } from './ui.js';
 import { icon } from './icons.js';
@@ -171,11 +172,19 @@ function costHero(ctx, mine) {
           : h('span', { class: 'hero-sub' }, single ? `${to?.name} hat noch kein PayPal hinterlegt.` : ''),
         h('button', { type: 'button', class: 'btn btn-glass', onclick: () => ctx.go('costs') }, single ? 'Ich habe bezahlt / Details' : 'Details')));
   }
+  if (bal.pendingOut > 0.004) {
+    return h('section', { class: 'hero good' },
+      h('div', { class: 'hero-label' }, 'Bezahlt gemeldet'),
+      h('div', { class: 'hero-amount' }, fmtEuro(bal.pendingOut)),
+      h('div', { class: 'hero-sub' }, `Wartet auf Bestätigung · ${weekLine}`),
+      h('button', { type: 'button', class: 'btn btn-glass', style: { alignSelf: 'flex-start' }, onclick: () => ctx.go('costs') }, 'Details', icon('chevron-right', { size: 15 })));
+  }
   if (bal.getTotal > 0.004) {
+    const reported = bal.get.reduce((a, p) => a + p.pendingTotal, 0);
     return h('section', { class: 'hero good' },
       h('div', { class: 'hero-label' }, 'Du bekommst noch'),
       h('div', { class: 'hero-amount' }, fmtEuro(bal.getTotal)),
-      h('div', { class: 'hero-sub' }, `von ${bal.get.map((p) => personById(p.from)?.name).join(', ')}`),
+      h('div', { class: 'hero-sub' }, `von ${bal.get.map((p) => personById(p.from)?.name).join(', ')}${reported > 0.004 ? ` · ${fmtEuro(reported)} davon als bezahlt gemeldet` : ''}`),
       h('button', { type: 'button', class: 'btn btn-glass', style: { alignSelf: 'flex-start' }, onclick: () => ctx.go('costs') }, 'Offene Beträge', icon('chevron-right', { size: 15 })));
   }
   return h('section', { class: 'hero good' },
@@ -240,6 +249,8 @@ export function renderHome(el, ctx) {
     return;
   }
   if (admin && !state.setupDone && !(state.destination && personById(state.defaultDriver)?.address)) return;
+  const cc = confirmCard();
+  if (cc) el.append(cc);
   el.append(costHero(ctx, mine), tiles(ctx, mine), nextCard(ctx, mine));
   if (admin && !inGroup()) {
     el.append(h('button', { type: 'button', class: 'list list-row has-sq', onclick: () => ctx.openAccount(isLoggedIn() ? undefined : 'register') },

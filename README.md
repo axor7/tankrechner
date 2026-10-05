@@ -24,6 +24,7 @@ Handy: Tab-Leiste unten · Tablet/Computer: Seitenleiste · Karte ein-/ausblendb
 - **Fahrten:** eigener Regelplan; Farbkalender (jede Person eine Farbe, oben Hin / unten Zurück); Tag antippen → einzeln an-/absagen; KW antippen → ganze Woche
 - **Strecke:** Karte mit Route und Abholreihenfolge, eigene Abholadresse ändern (auch auf der Karte)
 - **Kosten:** offene Wochen, „Ich habe bezahlt“, „Wie berechnet?“ nur auf Wunsch, Prognose der eigenen Kosten für die kommenden Wochen
+- **Zahlung bestätigen:** Wer „Ich habe bezahlt“ meldet, wartet auf den Empfänger. Der sieht oben „Anna hat dir 24,32 € bezahlt – angekommen? Ja / Nein“. Erst nach „Ja“ gilt die Woche als bezahlt, bei „Nein“ ist sie wieder offen und der Zahler bekommt einen Hinweis. (Hat der Empfänger kein Konto, bestätigt ein Admin.)
 - Einstellung **Einfach / Detailliert** (Standard: einfach)
 
 ### Wie die App rechnet

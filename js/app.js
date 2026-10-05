@@ -13,9 +13,9 @@ import { renderCosts } from './view-costs.js';
 import { renderSettings } from './view-settings.js';
 import { loadExample } from './example.js';
 import { setupVersion } from './version.js';
-import { initAccount, inGroup, isAdmin, openAccount } from './account.js';
+import { initAccount, inGroup, isAdmin, openAccount, claims } from './account.js';
 import { me, adminSet, setAddress, freezePastWeeks } from './actions.js';
-import { weeks as deriveRange, myBalance } from './derived.js';
+import { weeks as deriveRange, myBalance, toConfirm } from './derived.js';
 import { addressInput } from './address.js';
 
 const ALL_VIEWS = [
@@ -320,7 +320,9 @@ function go(view) {
 function renderNav() {
   const cur = state.ui.tab;
   const mine = me();
-  const badge = mine ? myBalance(mine).owe.length : 0;
+  const accounts = claims();
+  const badge = (mine ? myBalance(mine).owe.length : 0)
+    + toConfirm(mine, { admin: isAdmin(), hasAccount: (pid) => !inGroup() || accounts.has(pid) }).length; // offen + zu bestätigen
   const vs = views();
   $('#nav-side').replaceChildren(...vs.map((v) => h('button', {
     type: 'button', class: `nav-item ${v.id === cur ? 'active' : ''}`, 'aria-current': v.id === cur ? 'page' : null, onclick: () => go(v.id),

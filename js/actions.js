@@ -110,14 +110,31 @@ export function setMyName(name) {
 export function markPaid(items, paid = true) {
   const at = Date.now();
   const mine = me();
+  const entry = (d) => (paid ? { amount: d.amount, at, by: nameOf(mine), pid: mine } : { revoked: true, at, by: nameOf(mine), pid: mine });
   if (isAdmin()) {
-    update((s) => { for (const d of items) s.payments[d.key] = paid ? { amount: d.amount, at, by: nameOf(mine) } : { revoked: true, at, by: nameOf(mine) }; });
+    update((s) => { for (const d of items) s.payments[d.key] = entry(d); });
   } else if (items.every((d) => d.from === mine || d.to === mine)) {
-    updateProfile((p) => { p.paid ||= {}; for (const d of items) p.paid[d.key] = paid ? { amount: d.amount, at, by: nameOf(mine) } : { revoked: true, at, by: nameOf(mine) }; });
+    updateProfile((p) => { p.paid ||= {}; for (const d of items) p.paid[d.key] = entry(d); });
   } else deny();
   const sum = items.reduce((a, d) => a + d.amount, 0).toFixed(2).replace('.', ',');
   const who = [...new Set(items.map((d) => nameOf(d.from)))].join(', ');
-  log(paid ? `${who}: ${sum} € als bezahlt markiert (${items.length} ${items.length === 1 ? 'Woche' : 'Wochen'})` : `${who}: „bezahlt“ zurückgenommen (${sum} €)`);
+  const reported = paid && items.every((d) => d.from === mine);
+  log(paid ? `${who}: ${sum} € ${reported ? 'als bezahlt gemeldet' : 'als bezahlt markiert'} (${items.length} ${items.length === 1 ? 'Woche' : 'Wochen'})` : `${who}: „bezahlt“ zurückgenommen (${sum} €)`);
+  return reported; // true: wartet noch auf Bestätigung
+}
+
+/** Empfänger (oder Admin für jemand ohne Konto): gemeldete Zahlung bestätigen oder ablehnen. */
+export function confirmPayment(items, ok) {
+  const at = Date.now();
+  const mine = me();
+  const entry = (d) => (ok ? { amount: d.amount, at, by: nameOf(mine), pid: mine } : { rejected: true, at, by: nameOf(mine), pid: mine });
+  if (items.every((d) => d.to === mine) && !isAdmin()) {
+    updateProfile((p) => { p.paid ||= {}; for (const d of items) p.paid[d.key] = entry(d); });
+  } else if (isAdmin()) {
+    update((s) => { for (const d of items) s.payments[d.key] = entry(d); });
+  } else deny();
+  const sum = items.reduce((a, d) => a + d.open, 0).toFixed(2).replace('.', ',');
+  log(`${nameOf(items[0].from)} → ${nameOf(items[0].to)}: ${sum} € ${ok ? 'Zahlung bestätigt' : 'Zahlung nicht erhalten'}`);
 }
 
 // ---------- Admin: Mitfahrer & Einstellungen ----------

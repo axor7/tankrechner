@@ -35,11 +35,16 @@ export function weeklyDebts(weeks, opts = {}, roundTrip = true, until = '9999-12
  * Verknüpft Schulden mit Zahlungen ({ [key]: { amount, at } }).
  * open = noch offener Rest (z. B. wenn sich die Woche nach dem Bezahlen geändert hat).
  */
-export function withPayments(debts, payments = {}) {
+export function withPayments(debts, payments = {}, states = {}) {
   return debts.map((d) => {
     const paid = payments[d.key]?.amount || 0;
     const open = Math.max(0, cents(d.amount) - cents(paid)) / 100;
-    return { ...d, paid, open, paidAt: payments[d.key]?.at || null };
+    const st = states[d.key];
+    return {
+      ...d, paid, open, paidAt: payments[d.key]?.at || null,
+      pending: open > 0 && st?.state === 'pending' ? st : null,   // gemeldet, wartet auf Bestätigung
+      rejected: open > 0 && st?.state === 'rejected' ? st : null, // Empfänger: nicht erhalten
+    };
   });
 }
 
@@ -49,10 +54,12 @@ export function openByPair(items) {
   for (const d of items) {
     if (d.open <= 0) continue;
     const k = `${d.from}|${d.to}`;
-    if (!pairs.has(k)) pairs.set(k, { from: d.from, to: d.to, items: [], total: 0 });
+    if (!pairs.has(k)) pairs.set(k, { from: d.from, to: d.to, items: [], total: 0, due: 0, pendingTotal: 0 });
     const p = pairs.get(k);
     p.items.push(d);
     p.total = (cents(p.total) + cents(d.open)) / 100;
+    if (d.pending) p.pendingTotal = (cents(p.pendingTotal) + cents(d.open)) / 100;
+    else p.due = (cents(p.due) + cents(d.open)) / 100; // noch zu zahlen (ohne gemeldete)
   }
   return [...pairs.values()].sort((a, b) => b.total - a.total);
 }
