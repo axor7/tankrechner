@@ -1,12 +1,13 @@
 // Einstiegspunkt: App-Gerüst (Navigation je Rolle, Karte), Strecke des Admins, Hintergrund-Berechnungen.
 import { state, update, subscribe, replaceState, defaultState, model, personById, activePersons, allRoutes, liveSnap, todayIso, SHARED_KEYS } from './state.js';
-import { reverseGeocode, fetchRoute, optimizeOrder } from './api.js';
+import { reverseGeocode, fetchRoute, fetchRouteInfo, optimizeOrder } from './api.js';
 import { MapView } from './map.js';
-import { FUELS, plannedStops, routeKey, mondayOf, addDays, hasOwners } from './calc.js';
-import { effectiveOrder, isActive } from './model.js';
-import { h, stat, fmtKm, fmtDuration, debounce, toast } from './ui.js';
+import { FUELS, plannedStops, routeKey, mondayOf, addDays, hasOwners, insertDetours } from './calc.js';
+import { effectiveOrder, isActive, activeDetours } from './model.js';
+import { h, debounce, toast } from './ui.js';
 import { icon } from './icons.js';
-import { priceCard, timeCard, costCard, stationSelected, startAutoRefresh } from './tab-fuel.js';
+import { stationSelected, startAutoRefresh } from './tab-fuel.js';
+import { autobahnRefs, roadEvents, alongRoute, isCurrent } from './traffic.js';
 import { renderHome } from './view-home.js';
 import { renderTrips, renderSheet } from './view-trips.js';
 import { renderCosts } from './view-costs.js';
@@ -14,9 +15,9 @@ import { renderSettings } from './view-settings.js';
 import { loadExample } from './example.js';
 import { setupVersion } from './version.js';
 import { initAccount, inGroup, isAdmin, openAccount, claims } from './account.js';
-import { me, adminSet, setAddress, freezePastWeeks } from './actions.js';
+import { me, adminSet, setAddress, freezePastWeeks, moveDetour } from './actions.js';
 import { weeks as deriveRange, myBalance, toConfirm } from './derived.js';
-import { addressInput } from './address.js';
+import { renderRouteView, openDetourForm, incidentPopup, detourPopup, shortPlace } from './view-route.js';
 
 const ALL_VIEWS = [
   { id: 'home', label: 'Übersicht', icon: 'house', color: 'blue' },
@@ -33,8 +34,21 @@ const safe = async (fn) => { try { await fn(); } catch (e) { toast(e.message, 'e
 
 // ---------- Ganze Route (alle Abholpunkte) & beste Reihenfolge ----------
 
-/** Stopps der ganzen Route: Fahrer → Abholpunkte (Reihenfolge) → Ziel. */
-function fullStops() {
+const ROUTE_COLORS = { hin: '#2563eb', rueck: '#ea580c' };
+
+/** Welche Richtung zeigt die Karte? */
+const routeDir = () => (state.roundTrip !== false && state.ui.routeDir === 'rueck' ? 'rueck' : 'hin');
+
+function setRouteDir(dir) {
+  update((s) => { s.ui.routeDir = dir; });
+  setTimeout(() => map.fit(fullStops(dir), displayRoute(dir)), 60);
+}
+
+/**
+ * Stopps der ganzen Route (alle fahren mit) in Fahrtrichtung, mit den heute geltenden Umleitungen.
+ * Hin: Fahrer → Abholpunkte → Ziel · Zurück: Ziel → Absetz-Reihenfolge → Fahrer
+ */
+function fullStops(dir = 'hin') {
   const persons = model().persons;
   const driver = personById(state.defaultDriver);
   if (!driver?.address?.lat || !state.destination?.lat) return [];
@@ -50,7 +64,18 @@ function fullStops() {
     stops.push({ id: `p:${pid}`, label: p.name, lat: p.address.lat, lng: p.address.lng, color: p.color, pids: [pid], draggable: admin || pid === mine });
   }
   stops.push({ id: 'dest', label: state.destination.label?.split(',')[0] || 'Ziel', lat: state.destination.lat, lng: state.destination.lng, draggable: admin });
-  return stops;
+  let seq = stops;
+  if (dir === 'rueck') {
+    // wie in der Abrechnung (model.tripSnap): erst die Absetz-Reihenfolge von Hand, dann der Rest rückwärts
+    const pick = stops.slice(1, -1);
+    const byPid = new Map(pick.flatMap((st) => st.pids.map((pid) => [pid, st])));
+    const mid = [];
+    for (const pid of state.returnOrder || []) { const st = byPid.get(pid); if (st && !mid.includes(st)) mid.push(st); }
+    seq = [stops[stops.length - 1], ...mid, ...pick.filter((st) => !mid.includes(st)).reverse(), { ...stops[0], label: `${driver.name} (Ende)` }];
+  }
+  return insertDetours(seq, activeDetours(state.detours, todayIso()), dir).map((st) => (st.via
+    ? { ...st, label: st.name, draggable: admin, popup: () => detourPopup(st.detour) }
+    : st));
 }
 
 const coordsKey = (stops) => stops.map((s) => `${s.lat.toFixed(5)},${s.lng.toFixed(5)}`).join(';');
@@ -79,16 +104,21 @@ const refreshRoute = debounce(async (force = false) => {
       for (const [k, id] of old.entries()) if (personById(id)?.archived && !order.includes(id)) order.splice(Math.min(k, order.length), 0, id);
       adminSet((s) => { s.optimizedOrder = order; s.optimizedFor = optKey; }, `Beste Abholreihenfolge berechnet: ${order.filter((id) => !personById(id)?.archived).map((id) => personById(id)?.name).join(' → ')}`);
     } else if (onlyRemoved && state.optimizedFor !== optKey) update((s) => { s.optimizedFor = optKey; });
-    const stops = fullStops();
-    const key = coordsKey(stops);
-    if (force || state.route?.key !== key) {
+    const dirs = state.roundTrip !== false ? ['hin', 'rueck'] : ['hin'];
+    for (const dir of dirs) {
+      const stops = fullStops(dir);
+      if (stops.length < 2) continue;
+      const key = coordsKey(stops);
+      const field = dir === 'rueck' ? 'returnRoute' : 'route';
+      if (!force && state[field]?.key === key) continue;
       const [r] = await fetchRoute(stops);
       update((s) => {
-        s.route = { key, distance: r.distance, duration: r.duration, coords: r.coords, legs: r.legs, wpIdx: r.wpIdx };
+        s[field] = { key, distance: r.distance, duration: r.duration, coords: r.coords, legs: r.legs, wpIdx: r.wpIdx };
         s.routeCache = { ...(s.routeCache || {}), [routeKey(stops)]: r.legs.map((l) => ({ km: Math.round(l.distance / 100) / 10, min: l.duration / 60 })) };
       });
-      map.fit(stops, state.route);
+      if (dir === routeDir()) map.fit(stops, state[field]);
     }
+    if (state.roundTrip === false && state.returnRoute) update((s) => { s.returnRoute = null; });
   } catch (e) {
     toast(`Route konnte nicht berechnet werden: ${e.message}`, 'error');
   } finally {
@@ -96,6 +126,100 @@ const refreshRoute = debounce(async (force = false) => {
     document.body.classList.remove('loading-route');
   }
 }, 400);
+
+// ---------- Route für die Anzeige (auch für Mitfahrer), befahrene Straßen, Verkehrsmeldungen ----------
+
+const localRoutes = new Map(); // Schlüssel → Route, die dieses Gerät selbst berechnet hat (z. B. Mitfahrer)
+const loadingRoutes = new Set();
+
+/** Route einer Richtung für die Karte: die gemeinsame des Admins, sonst selbst berechnet. */
+function displayRoute(dir) {
+  const stops = fullStops(dir);
+  if (stops.length < 2) return null;
+  const key = coordsKey(stops);
+  const shared = dir === 'rueck' ? state.returnRoute : state.route;
+  if (shared?.key === key) return shared;
+  if (localRoutes.has(key)) return localRoutes.get(key);
+  if (!isAdmin() && !loadingRoutes.has(key)) {
+    loadingRoutes.add(key);
+    fetchRoute(stops)
+      .then(([r]) => { localRoutes.set(key, { key, ...r }); requestRender(); })
+      .catch(() => {})
+      .finally(() => setTimeout(() => loadingRoutes.delete(key), 30_000));
+  }
+  return dir === 'rueck' && state.roundTrip === false ? null : shared || null;
+}
+
+const infos = new Map(); // Schlüssel → { refs, baseDistance, hasDetour, loading, error }
+
+/** Befahrene Straßen (für die Autobahn-Meldungen) und Länge ohne Umleitung. */
+function routeInfo(dir) {
+  const stops = fullStops(dir);
+  if (stops.length < 2) return null;
+  const key = coordsKey(stops);
+  let e = infos.get(key);
+  if (!e) {
+    const base = stops.filter((st) => !st.via);
+    e = { loading: true, hasDetour: base.length !== stops.length };
+    infos.set(key, e);
+    (async () => {
+      try {
+        e.refs = (await fetchRouteInfo(stops)).refs;
+        if (e.hasDetour && base.length >= 2) e.baseDistance = (await fetchRouteInfo(base)).distance;
+      } catch {
+        e.error = true;
+        setTimeout(() => infos.delete(key), 60_000); // später noch einmal versuchen
+      } finally {
+        e.loading = false;
+        requestRender();
+        loadTraffic();
+      }
+    })();
+  }
+  return e;
+}
+
+// Sperrungen & Baustellen auf der Strecke (je Richtung)
+let traffic = { hin: [], rueck: [], roads: [], at: 0, key: '', loading: false, ready: false, error: '' };
+
+async function loadTrafficNow(force = false) {
+  const dirs = state.roundTrip !== false ? ['hin', 'rueck'] : ['hin'];
+  const info = dirs.map((d) => routeInfo(d));
+  const routes = Object.fromEntries(dirs.map((d) => [d, displayRoute(d)]));
+  if (info.some((i) => !i || i.loading) || dirs.some((d) => !routes[d]?.coords) || traffic.loading) return; // kommt wieder, sobald alles da ist
+  const roads = autobahnRefs(info.flatMap((i) => i.refs || []));
+  const key = `${dirs.map((d) => routes[d].key).join('|')}|${roads.join()}`;
+  if (!force && traffic.key === key && Date.now() - traffic.at < 15 * 60e3) return;
+  traffic = { ...traffic, loading: true };
+  requestRender();
+  try {
+    if (info.some((i) => i.error)) throw new Error('Straßen der Route nicht ermittelt');
+    const now = new Date();
+    const items = (await Promise.all(roads.map((r) => roadEvents(r, { force })))).flat().filter((i) => isCurrent(i.times, now));
+    const roadsBy = Object.fromEntries(dirs.map((d, k) => [d, autobahnRefs(info[k].refs || [])]));
+    traffic = { hin: alongRoute(items, routes.hin.coords), rueck: routes.rueck ? alongRoute(items, routes.rueck.coords) : [], roads, roadsBy, at: Date.now(), key, loading: false, ready: true, error: '' };
+  } catch (e) {
+    traffic = { ...traffic, roads, at: Date.now(), key, loading: false, ready: true, error: e.message || 'Fehler' };
+  }
+  requestRender();
+}
+const loadTraffic = debounce(loadTrafficNow, 300);
+
+function focusIncident(it) {
+  if (!state.ui.showMap) update((s) => { s.ui.showMap = true; });
+  if (window.innerWidth < 900) window.scrollTo({ top: 0, behavior: 'smooth' });
+  map.invalidate();
+  setTimeout(() => map.focusIncident(it), 120);
+}
+
+/** Aus einer Sperrung heraus: Umleitung mit Grund und Enddatum vorbelegen. */
+function detourFromIncident(it) {
+  map.closePopup();
+  const st = it.times.end || it.times.overallEnd;
+  const until = st ? `${st.getFullYear()}-${String(st.getMonth() + 1).padStart(2, '0')}-${String(st.getDate()).padStart(2, '0')}` : '';
+  openDetourForm({ dir: routeDir(), note: `${it.road} ${it.title.replace(/^A\d+\s*\|\s*/, '')}`.trim(), until: until >= todayIso() ? until : '' });
+  toast('Tippe jetzt auf der Karte auf die Straße, über die ihr fahrt – oder such den Ort im Formular.');
+}
 
 // ---------- Teilstrecken für einzelne Fahrten nachladen ----------
 
@@ -134,11 +258,14 @@ const ensureRoutes = debounce(async () => {
 // ---------- Karte ----------
 
 const mapHandlers = {
-  menuItems: () => (isAdmin() ? [['start', 'Start (Fahrer)'], ['end', 'Ziel']] : me() ? [['me', 'Meine Abholadresse']] : []),
+  menuItems: () => (isAdmin()
+    ? [['start', 'Start (Fahrer)'], ['end', 'Ziel'], ['detour', 'Umleitung über diesen Punkt']]
+    : me() ? [['me', 'Meine Abholadresse']] : []),
   async onAddPoint(kind, latlng) {
     const label = await reverseGeocode(latlng.lat, latlng.lng);
     const addr = { label, lat: latlng.lat, lng: latlng.lng };
-    if (kind === 'me') safe(() => setAddress(me(), addr));
+    if (kind === 'detour') openDetourForm({ lat: addr.lat, lng: addr.lng, label, place: shortPlace(label) });
+    else if (kind === 'me') safe(() => setAddress(me(), addr));
     else if (kind === 'end') setDestination(addr);
     else safe(() => setAddress(state.defaultDriver, addr));
   },
@@ -146,6 +273,7 @@ const mapHandlers = {
     const label = await reverseGeocode(latlng.lat, latlng.lng);
     const addr = { label, lat: latlng.lat, lng: latlng.lng };
     if (id === 'dest') setDestination(addr);
+    else if (id.startsWith('via:')) safe(() => { moveDetour(id.slice(4), { ...addr, place: shortPlace(label) }); refreshRoute(); });
     else safe(() => setAddress(id.slice(2), addr));
   },
   onStopRemove() {},
@@ -158,18 +286,31 @@ function setDestination(addr) {
 
 let mapKeys = {};
 function syncMap() {
-  const stops = fullStops();
-  const sk = JSON.stringify(stops.map((s) => [s.id, s.lat, s.lng, s.label, s.draggable]));
+  const dir = routeDir();
+  const stops = fullStops(dir);
+  const route = displayRoute(dir);
+  const sk = JSON.stringify([dir, stops.map((s) => [s.id, s.lat, s.lng, s.label, s.draggable])]);
   if (sk !== mapKeys.stops) {
     map.setStops(stops);
-    if (!mapKeys.fitted && stops.length) { setTimeout(() => map.fit(stops, state.route), 80); mapKeys.fitted = true; } // erstes Mal: auf die Strecke zoomen
+    if (!mapKeys.fitted && stops.length) { setTimeout(() => map.fit(stops, route), 80); mapKeys.fitted = true; } // erstes Mal: auf die Strecke zoomen
     mapKeys.stops = sk;
   }
-  const rk = [state.route?.key, state.route?.distance].join('|');
+  const rk = [dir, route?.key, route?.distance].join('|');
   if (rk !== mapKeys.route) {
-    if (state.route && mapKeys.route !== undefined) map.fit(stops, state.route);
-    map.setRoute(state.route?.coords ? state.route : null, [], 0, null);
+    if (route && mapKeys.route !== undefined) map.fit(stops, route);
+    map.setRoute(route?.coords ? route : null, { color: ROUTE_COLORS[dir] });
     mapKeys.route = rk;
+  }
+  const ik = [dir, traffic.key, traffic.at, isAdmin()].join('|');
+  if (ik !== mapKeys.traffic) {
+    map.setIncidents(traffic[dir] || [], { popup: (it) => incidentPopup(it, { onDetour: isAdmin() ? detourFromIncident : null }) });
+    mapKeys.traffic = ik;
+  }
+  const back = state.roundTrip !== false && stops.length >= 2;
+  const dk = `${back}|${dir}`;
+  if (dk !== mapKeys.dir) {
+    map.setDirControl({ show: back, dir, onChange: setRouteDir });
+    mapKeys.dir = dk;
   }
   const tk = FUELS[state.car.fuel]?.tk;
   const stKey = [state.stations.length, state.stations[0]?.id, state.price.stationId, tk, state.price.updatedAt].join('|');
@@ -182,130 +323,7 @@ function syncMap() {
 function toggleMap() {
   update((s) => { s.ui.showMap = !s.ui.showMap; });
   map.invalidate();
-  if (state.ui.showMap) setTimeout(() => map.fit(fullStops(), state.route), 80);
-}
-
-// ---------- Strecke (Admin) ----------
-
-function orderList(ids, onMove, fixedFirst = 0) {
-  return h('ol', { class: 'return-order' }, ids.map((pid, k) => {
-    const p = personById(pid);
-    return h('li', {},
-      h('span', { class: 'ret-num' }, `${k + 1}.`),
-      h('span', { class: 'dot', style: { '--pc': p?.color } }),
-      h('span', { class: 'ret-name' }, p?.name, h('small', { class: 'muted' }, ` · ${p?.address?.label?.split(',').slice(0, 2).join(',') || ''}`)),
-      h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Früher', disabled: k <= fixedFirst, onclick: () => onMove(k, -1) }, icon('arrow-up', { size: 18 })),
-      h('button', { class: 'icon-btn', type: 'button', 'aria-label': 'Später', disabled: k === ids.length - 1, onclick: () => onMove(k, 1) }, icon('arrow-down', { size: 18 })));
-  }));
-}
-
-function routeView(el) {
-  const persons = model().persons;
-  const driver = personById(state.defaultDriver);
-  const active = persons.filter(isActive);
-  const pickups = effectiveOrder(state, active);
-  const noAddr = active.filter((p) => p.id !== state.defaultDriver && !p.address?.lat);
-  const manual = !!state.order?.length;
-  const move = (k, dir) => {
-    const o = [...pickups];
-    [o[k], o[k + dir]] = [o[k + dir], o[k]];
-    safe(() => adminSet((s) => { s.order = o; }, `Abholreihenfolge von Hand: ${o.map((id) => personById(id)?.name).join(' → ')}`));
-    refreshRoute();
-  };
-  const back = state.returnOrder?.length ? [...state.returnOrder.filter((id) => pickups.includes(id)), ...[...pickups].reverse().filter((id) => !state.returnOrder.includes(id))] : [...pickups].reverse();
-  const moveBack = (k, dir) => {
-    const o = [...back];
-    [o[k], o[k + dir]] = [o[k + dir], o[k]];
-    safe(() => adminSet((s) => { s.returnOrder = o; }, `Rückfahrt-Reihenfolge: ${o.map((id) => personById(id)?.name).join(' → ')}`));
-  };
-
-  el.append(
-    h('section', { class: 'card' },
-      h('h2', {}, 'Ziel'),
-      addressInput({ value: state.destination, placeholder: 'Ziel, z. B. Firma', near: driver?.address, onSelect: setDestination, focusKey: 'dest' })),
-    h('section', { class: 'card' },
-      h('h2', {}, 'Start'),
-      h('p', { class: 'hint small' }, `Adresse von ${driver?.name || 'dem Fahrer'} – hier beginnt die Fahrt.`),
-      addressInput({ value: driver?.address, placeholder: 'Startadresse', allowLocate: true, onSelect: (a) => safe(() => setAddress(state.defaultDriver, a)), focusKey: 'start' })),
-    h('section', { class: 'card' },
-      h('div', { class: 'row between' }, h('h2', {}, 'Abholreihenfolge'), manual ? h('span', { class: 'claim-badge' }, 'von Hand') : pickups.length > 1 ? h('span', { class: 'claim-badge me' }, 'optimiert') : null),
-      pickups.length ? orderList(pickups, move) : h('p', { class: 'hint' }, 'Noch keine Abholadressen. Mitfahrer tragen ihre Adresse selbst ein (oder du unter Einstellungen → Mitfahrer).'),
-      noAddr.length ? h('p', { class: 'hint small' }, `Ohne Adresse (steigen beim Start zu): ${noAddr.map((p) => p.name).join(', ')}`) : null,
-      pickups.length > 1 ? h('div', { class: 'row gap wrap' },
-        h('button', {
-          type: 'button', class: 'btn btn-small',
-          onclick: () => { safe(() => adminSet((s) => { s.order = null; }, manual ? 'Abholreihenfolge: wieder automatisch (beste Route)' : null)); refreshRoute(true); },
-        }, icon('sparkles', { size: 15 }), manual ? 'Beste Reihenfolge wiederherstellen' : 'Neu berechnen')) : null,
-      h('p', { class: 'hint small' }, 'Die App berechnet automatisch die kürzeste Route zum Einsammeln. Mit den Pfeilen kannst du sie von Hand ändern.'),
-    ),
-  );
-
-  if (state.route?.distance) {
-    el.append(h('section', { class: 'card' },
-      h('div', { class: 'stats' },
-        stat('Strecke (alle abholen)', fmtKm(state.route.distance / 1000)),
-        stat('Fahrzeit', fmtDuration(state.route.duration)),
-        state.roundTrip ? stat('Hin & zurück', fmtKm((state.route.distance / 1000) * 2)) : null),
-      h('p', { class: 'hint small' }, 'Fährt jemand an einem Tag nicht mit, wird seine Adresse ausgelassen und die Strecke für diesen Tag neu berechnet.')));
-  } else if (!driver?.address?.lat || !state.destination?.lat) {
-    el.append(h('section', { class: 'card' },
-      h('h2', {}, 'Ohne Karte'),
-      h('p', { class: 'hint small' }, 'Solange Start oder Ziel fehlen, wird mit diesen Kilometern pro Fahrt gerechnet (alle zahlen die ganze Strecke).'),
-      h('label', { class: 'field' }, 'Kilometer pro Fahrt',
-        h('input', { type: 'number', min: 0, step: 0.1, inputmode: 'decimal', value: state.manualKm ?? '', onchange: (e) => safe(() => adminSet((s) => { s.manualKm = e.target.value === '' ? null : Number(e.target.value); }, `Kilometer pro Fahrt: ${e.target.value}`)) }))));
-  }
-
-  el.append(h('section', { class: 'card' },
-    h('label', { class: 'switch-row' }, h('span', {}, h('strong', {}, 'Mit Rückfahrt')),
-      h('input', { type: 'checkbox', class: 'switch', checked: state.roundTrip !== false, onchange: (e) => safe(() => adminSet((s) => { s.roundTrip = e.target.checked; }, `Rückfahrt ${e.target.checked ? 'an' : 'aus'}`)) })),
-    state.roundTrip !== false && pickups.length > 1 ? [
-      h('p', { class: 'hint small' }, 'Reihenfolge beim Absetzen auf dem Rückweg:'),
-      orderList(back, moveBack),
-      state.returnOrder?.length ? h('button', { type: 'button', class: 'btn btn-small', onclick: () => safe(() => adminSet((s) => { s.returnOrder = null; }, 'Rückfahrt: wie Hinweg umgekehrt')) }, icon('rotate-ccw', { size: 15 }), 'Wie Hinweg umgekehrt') : null,
-    ] : null,
-  ));
-}
-
-/** Strecke für Mitfahrer: nur ansehen, eigene Abholadresse ändern. */
-function memberRouteView(el) {
-  const persons = model().persons;
-  const driver = personById(state.defaultDriver);
-  const mine = me();
-  const pickups = effectiveOrder(state, persons.filter(isActive));
-  const my = personById(mine);
-  el.append(
-    h('section', { class: 'card' },
-      h('div', { class: 'list' },
-        h('div', { class: 'list-row' }, h('span', { class: 'dot', style: { '--pc': driver?.color } }),
-          h('span', { class: 'grow' }, h('strong', {}, 'Start'), h('small', { class: 'muted' }, ` · ${driver?.name || 'Fahrer'}`))),
-        pickups.map((pid, k) => {
-          const p = personById(pid);
-          return h('div', { class: 'list-row' }, h('span', { class: 'dot', style: { '--pc': p?.color } }),
-            h('span', { class: 'grow' }, `${k + 1}. ${p?.name}`, pid === mine ? h('span', { class: 'muted' }, ' (du)') : null));
-        }),
-        h('div', { class: 'list-row' }, icon('map-pin', { size: 16 }),
-          h('span', { class: 'grow' }, h('strong', {}, 'Ziel'), h('small', { class: 'muted' }, ` · ${state.destination?.label?.split(',').slice(0, 2).join(',') || 'noch nicht festgelegt'}`)))),
-      state.route?.distance ? h('div', { class: 'stats', style: { marginTop: '.75rem' } },
-        stat('Strecke (alle abholen)', fmtKm(state.route.distance / 1000)),
-        stat('Fahrzeit', fmtDuration(state.route.duration))) : null,
-      h('p', { class: 'hint small' }, 'Die Abholreihenfolge legt der Admin fest. Fährt jemand an einem Tag nicht mit, wird seine Adresse ausgelassen.')),
-    my ? h('section', { class: 'card' },
-      h('h2', {}, my.id === state.defaultDriver ? 'Deine Startadresse' : 'Deine Abholadresse'),
-      addressInput({ value: my.address, placeholder: 'Adresse suchen', allowLocate: true, near: state.destination, onSelect: (a) => safe(() => setAddress(mine, a)), focusKey: 'my-addr' }),
-      h('p', { class: 'hint small' }, 'Du kannst deine Adresse auch auf der Karte verschieben oder in die Karte tippen.')) : null,
-  );
-  if (!state.ui.showMap) el.append(h('button', { type: 'button', class: 'btn', onclick: toggleMap }, icon('map', { size: 18 }), 'Karte einblenden'));
-}
-
-function renderRouteView(el) {
-  if (!isAdmin()) return memberRouteView(el);
-  const sub = state.ui.routeSub === 'fuel' ? 'fuel' : 'route';
-  el.append(h('div', { class: 'segmented' },
-    h('button', { type: 'button', class: sub === 'route' ? 'active' : '', onclick: () => update((s) => { s.ui.routeSub = 'route'; }) }, 'Route'),
-    h('button', { type: 'button', class: sub === 'fuel' ? 'active' : '', onclick: () => update((s) => { s.ui.routeSub = 'fuel'; }) }, 'Spritpreis & Tankzeit')));
-  if (sub === 'route') routeView(el);
-  else el.append(...[priceCard(map), costCard(), timeCard()].filter(Boolean));
-  if (!state.ui.showMap) el.append(h('button', { type: 'button', class: 'btn', onclick: toggleMap }, icon('map', { size: 18 }), 'Karte einblenden'));
+  if (state.ui.showMap) setTimeout(() => map.fit(fullStops(routeDir()), displayRoute(routeDir())), 80);
 }
 
 // ---------- Navigation ----------
@@ -314,7 +332,7 @@ function go(view) {
   update((s) => { s.ui.tab = view; });
   window.scrollTo({ top: 0 });
   map.invalidate();
-  if (view === 'route') setTimeout(() => map.fit(fullStops(), state.route), 120); // Karte wird auf dem Handy erst hier sichtbar
+  if (view === 'route') setTimeout(() => map.fit(fullStops(routeDir()), displayRoute(routeDir())), 120); // Karte wird auf dem Handy erst hier sichtbar
 }
 
 function renderNav() {
@@ -360,7 +378,10 @@ function releasePointer() {
   if (pending) setTimeout(requestRender, 0);
 }
 
-const ctx = () => ({ map, go, toggleMap, data: dataActions, openAccount, setDestination, adminSet: (fn, text) => safe(() => adminSet(fn, text)) });
+const ctx = () => ({
+  map, go, toggleMap, data: dataActions, openAccount, setDestination, adminSet: (fn, text) => safe(() => adminSet(fn, text)),
+  refreshRoute, routeDir, setRouteDir, displayRoute, routeInfo, traffic: () => traffic, loadTraffic, focusIncident,
+});
 
 function render() {
   const vs = views();
@@ -379,7 +400,7 @@ function render() {
   if (view === 'home') renderHome(el, c);
   if (view === 'trips') renderTrips(el, c);
   if (view === 'costs') renderCosts(el, c);
-  if (view === 'route') renderRouteView(el);
+  if (view === 'route') { renderRouteView(el, c); loadTraffic(); }
   if (view === 'settings') renderSettings(el, c);
   if (focusedId) el.querySelector(`[data-focus-key="${focusedId}"]`)?.focus();
   if ($('#day-dialog')?.open) renderSheet();
@@ -439,7 +460,7 @@ function init() {
   setupImport();
   initAccount();
   requestRender();
-  map.fit(fullStops(), state.route);
+  map.fit(fullStops(routeDir()), displayRoute(routeDir()));
   startAutoRefresh();
   window.addEventListener('resize', () => map.invalidate());
   window.addEventListener('scroll', () => document.body.classList.toggle('scrolled', window.scrollY > 8), { passive: true });

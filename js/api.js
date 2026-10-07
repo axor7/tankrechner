@@ -75,6 +75,20 @@ export async function fetchRoute(stops) {
 }
 
 /**
+ * Länge, Fahrzeit und befahrene Straßen (z. B. „A 8“, „B 14“) einer Stoppfolge – ohne Geometrie, daher klein.
+ * → { distance (m), duration (s), refs: [Straßennummern] }
+ */
+export async function fetchRouteInfo(stops) {
+  const coords = stops.map((s) => `${s.lng.toFixed(6)},${s.lat.toFixed(6)}`).join(';');
+  const data = await getJSON(`${OSRM}/route/v1/driving/${coords}?overview=false&steps=true&alternatives=false`);
+  if (data.code !== 'Ok') throw new Error(data.message || data.code);
+  const r = data.routes[0];
+  const refs = new Set();
+  for (const leg of r.legs) for (const st of leg.steps || []) if (st.ref) refs.add(st.ref);
+  return { distance: r.distance, duration: r.duration, refs: [...refs] };
+}
+
+/**
  * Beste Reihenfolge der Abholpunkte (Routenplaner löst das „Einsammel-Problem“).
  * points: [start, ...abholpunkte, ziel] als { lat, lng } → Reihenfolge der Abholpunkte (Indizes 0..n-1)
  */
@@ -86,12 +100,6 @@ export async function optimizeOrder(points) {
   // waypoint_index = Position des Punkts in der besten Reihenfolge
   const pos = data.waypoints.map((w, i) => ({ i, at: w.waypoint_index }));
   return pos.slice(1, -1).sort((a, b) => a.at - b.at).map((x) => x.i - 1);
-}
-
-export function legIndexAt(route, latlng) {
-  const i = nearestIndex(route.coords, [latlng.lat, latlng.lng]);
-  for (let k = 0; k < route.wpIdx.length - 1; k++) if (i <= route.wpIdx[k + 1]) return k;
-  return route.wpIdx.length - 2;
 }
 
 /** Tankstellen im Umkreis (max. 25 km). */

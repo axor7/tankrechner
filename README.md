@@ -11,6 +11,7 @@ Handy: Tab-Leiste unten · Tablet/Computer: Seitenleiste · Karte ein-/ausblendb
 
 **Admin** (wer die Fahrgemeinschaft erstellt; Admin-Rechte lassen sich teilen) – volle Kontrolle:
 - Ziel und Startadresse, **automatisch beste Abholreihenfolge** (Routenplaner), von Hand änderbar; Rückfahrt-Reihenfolge
+- **Umleitungen** eintragen (z. B. wegen einer Sperrung): Richtung, „über“ (Adresse oder auf der Karte tippen), Grund, gilt ab/bis – die App rechnet ab dem Tag mit der längeren Strecke
 - Auto, Spritpreis (live an der Strecke), Aufteilungsregel, Mitfahrer (auch ohne App); Entfernen wirkt erst ab heute, vergangene Fahrten bleiben in der Abrechnung
 - Jeden Tag bearbeiten: wer fährt, anderer Fahrer, freier Tag
 - **Ganze Woche auf einmal:** im Kalender auf die KW tippen → je Person „Regelplan / Ganze Woche / Gar nicht“
@@ -22,7 +23,8 @@ Handy: Tab-Leiste unten · Tablet/Computer: Seitenleiste · Karte ein-/ausblendb
 - Einstieg Schritt für Schritt: Wer bist du? → Abholadresse → Regelplan
 - **Übersicht:** eigene Kosten, direkter **PayPal-Knopf** mit dem offenen Betrag, Preis pro Fahrt, nächste Fahrten (Hin & Zurück zu einem Tag zusammengefasst)
 - **Fahrten:** eigener Regelplan; Farbkalender (jede Person eine Farbe, oben Hin / unten Zurück); Tag antippen → einzeln an-/absagen; KW antippen → ganze Woche
-- **Strecke:** Karte mit Route und Abholreihenfolge, eigene Abholadresse ändern (auch auf der Karte)
+- **Strecke:** Karte mit **Hin- und Rückfahrt** (umschaltbar), Abholreihenfolge, eigene Abholadresse ändern (auch auf der Karte)
+- **Sperrungen & Baustellen** auf der Strecke (Autobahnen, Daten der Autobahn GmbH): antippen zeigt, was gilt und wie lange noch; eingetragene Umleitungen sieht jeder
 - **Kosten:** offene Wochen, „Ich habe bezahlt“, „Wie berechnet?“ nur auf Wunsch, Prognose der eigenen Kosten für die kommenden Wochen
 - **Zahlung bestätigen:** Wer „Ich habe bezahlt“ meldet, wartet auf den Empfänger. Der sieht oben „Anna hat dir 24,32 € bezahlt – angekommen? Ja / Nein“. Erst nach „Ja“ gilt die Woche als bezahlt, bei „Nein“ ist sie wieder offen und der Zahler bekommt einen Hinweis. (Hat der Empfänger kein Konto, bestätigt ein Admin.)
 - Einstellung **Einfach / Detailliert** (Standard: einfach)
@@ -33,6 +35,7 @@ Handy: Tab-Leiste unten · Tablet/Computer: Seitenleiste · Karte ein-/ausblendb
 - Route je Fahrt: Start des Fahrers → Abholadressen der Mitfahrer dieses Tages (in Abholreihenfolge) → Ziel; wer nicht mitfährt, wird nicht angefahren
 - Jede Teilstrecke wird unter denen geteilt, die dort im Auto sitzen → man zahlt ab der eigenen Adresse
 - Jede Woche wird nur unter denen aufgeteilt, die in dieser Woche wirklich mitgefahren sind
+- Umleitungen sind ein zusätzlicher Wegpunkt dort, wo der Umweg am kleinsten ist; den Umweg zahlen die, die auf diesem Stück im Auto sitzen. Sie gelten nur von–bis und nur in ihrer Richtung; beendet wird ab heute
 - Nichts wirkt rückwirkend: Regelplan, Fahrerwechsel und Entfernen gelten ab heute; abgeschlossene Wochen werden mit ihren Werten (Preis, Verbrauch, Adressen, Aufteilungsregel) eingefroren; geplante Fahrten werden erst ab dem Tag fällig
 
 ## Fahrgemeinschaft mit Login
@@ -74,7 +77,9 @@ Der Key wird nur in deinem Browser gespeichert. Ohne Key funktioniert alles mit 
 
 Ohne Anmeldung liegen alle Daten (Personen, Fahrten, Einstellungen) nur im `localStorage` deines Browsers. In einer Fahrgemeinschaft liegen die gemeinsamen Daten in der Supabase-Datenbank; lesen und ändern können sie nur deren Mitglieder. Tankerkönig-Key und Messwerte bleiben immer auf dem Gerät.
 Über das Menü ☰ kannst du sie als JSON exportieren/importieren, z. B. um sie auf ein anderes Gerät zu übertragen.
-Externe Dienste: OpenStreetMap (Karte), OSRM (Routing), Photon (Adresssuche), Tankerkönig (Preise).
+Externe Dienste: OpenStreetMap (Karte), OSRM (Routing), Photon (Adresssuche), Tankerkönig (Preise), Autobahn GmbH des Bundes (Sperrungen & Baustellen, [verkehr.autobahn.de](https://verkehr.autobahn.de/o/autobahn/)).
+
+Sperrungen auf Bundes-, Landes- und Kreisstraßen gibt es nicht als offene Echtzeitdaten. Der Routenplaner (OSRM) kennt nur Sperrungen, die in OpenStreetMap eingetragen sind (meist längere Baustellen) – für alles andere eine Umleitung eintragen.
 
 ## Tests
 
@@ -82,16 +87,17 @@ Externe Dienste: OpenStreetMap (Karte), OSRM (Routing), Photon (Adresssuche), Ta
 npm test
 ```
 
-Testet die Rechenlogik (Kosten, Teilstrecken-Aufteilung, Ausgleichszahlungen, Kalenderwochen, Tankzeiten).
+Testet die Rechenlogik (Kosten, Teilstrecken-Aufteilung, Umleitungen, Ausgleichszahlungen, Kalenderwochen, Tankzeiten) und das Auslesen/Zuordnen der Verkehrsmeldungen.
 
 ## Aufbau
 
 ```
 index.html          Seite (Seitenleiste, Titelzeile, Ansicht, Karte, Tab-Leiste, Dialoge)
 css/style.css       Gestaltung im Apple-Stil
-js/app.js           Start, Navigation je Rolle, Karte, Strecke, Hintergrund-Berechnungen
+js/app.js           Start, Navigation je Rolle, Karte (Hin/Rück), Routen, Verkehrsmeldungen laden, Hintergrund-Berechnungen
 js/view-home.js     Übersicht, Willkommen, geführte Einrichtung
 js/view-trips.js    Regelplan, Farbkalender, Tag / ganze Woche bearbeiten
+js/view-route.js    Strecke: Hin-/Rückfahrt, Sperrungen & Baustellen, Umleitungen, Ziel/Start/Reihenfolge
 js/view-costs.js    Kosten (einfach/detailliert), bezahlen, Prognose
 js/view-settings.js Profil, Ansicht, Mitfahrer, Mitglieder & Rechte, Protokoll
 js/actions.js       Alle Änderungen: Rechte, Speicherort (Profil/gemeinsam), Protokoll
@@ -103,6 +109,7 @@ js/sync.js          Synchronisation mit Konfliktbehandlung (getestet)
 js/account.js       Konto, Fahrgemeinschaft, Rollen, Profile
 js/cloud.js         Supabase-Anbindung
 js/pay.js           PayPal.me-Links und Nachrichten (getestet)
+js/traffic.js       Sperrungen & Baustellen (Autobahn GmbH): Zeiten auslesen, der Strecke und Fahrtrichtung zuordnen (getestet)
 js/tab-fuel.js      Auto, Spritpreis, Tankstellen, beste Tankzeit
 js/address.js       Adresssuche
 js/map.js, api.js, state.js, icons.js, ui.js, version.js, example.js, fueltimes.js

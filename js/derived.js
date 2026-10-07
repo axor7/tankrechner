@@ -89,7 +89,7 @@ export function tripResult(date, dir) {
   const monday = mondayOf(date);
   const week = frozenWeeks()[monday] || liveSnap();
   const names = Object.fromEntries(m.persons.map((p) => [p.id, p.name]));
-  t.snap = tripSnap(week, t, allRoutes(), names);
+  t.snap = tripSnap(week, t, allRoutes(), names, date);
   return { trip: t, result: calcTrip(t, t.snap, t.snap.split || state.split, dir) }; // Regel der jeweiligen Woche
 }
 

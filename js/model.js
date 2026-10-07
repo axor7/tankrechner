@@ -152,6 +152,8 @@ export function liveWeekSnap(shared, persons, price) {
     returnOrder: shared.returnOrder || null,
     manualKm: Number(shared.manualKm) || 0,
     split: { ...(shared.split || {}) },                 // Aufteilungsregel gilt pro Woche
+    // Umleitungen (gelten je Datum von–bis; eingefrorene Wochen behalten ihre)
+    detours: (shared.detours || []).filter((d) => d?.lat != null).map(({ id, dir, lat, lng, place, from, until }) => ({ id, dir, lat, lng, place, from, until })),
     at: Date.now(),
   };
 }
@@ -169,7 +171,10 @@ const short = (label, fallback) => (label ? label.split(',')[0] : fallback);
  * Strecke einer Fahrt als calc.js-Snapshot: Fahrer-Adresse → Abholpunkte (in Reihenfolge) → Ziel.
  * Mitfahrer ohne Adresse steigen beim Fahrer zu. Ohne Fahrer-Adresse oder Ziel: manuelle Kilometer.
  */
-export function tripSnap(week, trip, routes = {}, names = {}) {
+/** Umleitungen, die an diesem Tag gelten (von–bis, beide Tage eingeschlossen). */
+export const activeDetours = (detours, date) => (detours || []).filter((d) => d?.lat != null && (!d.from || d.from <= date) && (!d.until || date <= d.until));
+
+export function tripSnap(week, trip, routes = {}, names = {}, date = null) {
   const base = { consumption: week.consumption, price: week.price, extraPerKm: week.extraPerKm, fuel: week.fuel, split: week.split };
   const a = week.addresses || {};
   const start = a[trip.driver];
@@ -202,7 +207,8 @@ export function tripSnap(week, trip, routes = {}, names = {}) {
     const rest = ids.slice(1, -1).filter((id) => !mid.includes(id)).reverse();
     returnOrder = ['dest', ...mid, ...rest, ids[0]];
   }
-  return { ...base, legs: [], stops, returnOrder, routes: { ...routes, ...(week.routes || {}) } };
+  const detours = date ? activeDetours(week.detours, date) : [];
+  return { ...base, legs: [], stops, returnOrder, detours, routes: { ...routes, ...(week.routes || {}) } };
 }
 
 /**
@@ -221,7 +227,7 @@ export function deriveWeeks(model, fromMonday, toMonday, { frozen = {}, live, ro
       for (const dir of model.dirs) {
         const t = model.trip(date, dir);
         if (!t) continue;
-        t.snap = tripSnap(week, t, routes, names);
+        t.snap = tripSnap(week, t, routes, names, date);
         (days[date] ||= {})[dir] = t;
       }
     }

@@ -23,7 +23,9 @@ export function defaultState() {
     order: null,                   // Abholreihenfolge von Hand (Personen-IDs), sonst berechnet
     optimizedOrder: null,          // beste Abholreihenfolge (berechnet)
     returnOrder: null,             // Absetz-Reihenfolge von Hand, sonst umgekehrt
-    route: null,                   // ganze Route (für die Karte)
+    route: null,                   // ganze Route Hinfahrt (für die Karte)
+    returnRoute: null,             // ganze Route Rückfahrt (für die Karte)
+    detours: [],                   // Umleitungen [{ id, dir, lat, lng, place, label, note, from, until, at, by }]
     routeCache: {},                // berechnete Teilstrecken je Stoppfolge
     car: { consumption: 6.5, fuel: 'e10', extraPerKm: 0 },
     price: { mode: 'cheapest', manual: 1.75, current: null, stationId: null, stationName: '', updatedAt: null },
@@ -66,7 +68,7 @@ export function save() {
 
 /** Daten, die in einer Fahrgemeinschaft geteilt werden (Rest bleibt pro Gerät). */
 export const SHARED_KEYS = ['schema', 'persons', 'defaultDriver', 'drivers', 'destination', 'roundTrip', 'manualKm', 'order', 'optimizedOrder', 'returnOrder',
-  'route', 'routeCache', 'car', 'price', 'split', 'days', 'weeks', 'payments', 'setupDone', 'setupCar', 'optimizedFor'];
+  'route', 'returnRoute', 'detours', 'routeCache', 'car', 'price', 'split', 'days', 'weeks', 'payments', 'setupDone', 'setupCar', 'optimizedFor'];
 
 export function sharedData(s = state) {
   const o = {};

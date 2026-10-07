@@ -1,6 +1,6 @@
 // Kartenansicht (Leaflet + OpenStreetMap).
 /* global L */
-import { legIndexAt } from './api.js';
+import { icon } from './icons.js';
 
 const ROUTE_COLOR = '#2563eb';
 
@@ -10,6 +10,20 @@ function stopIcon(i, n, color) {
   const style = color ? ` style="background:${color}"` : '';
   return L.divIcon({ className: '', html: `<div class="pin pin-${kind}"${style}><span>${text}</span></div>`, iconSize: [30, 38], iconAnchor: [15, 36] });
 }
+
+/** Runder Marker mit Symbol (Umleitung, Sperrung, Baustelle). */
+function badgeIcon(name, cls, size = 30) {
+  return L.divIcon({ className: '', html: `<div class="map-badge ${cls}">${icon(name, { size: Math.round(size * 0.55) }).outerHTML}</div>`, iconSize: [size, size], iconAnchor: [size / 2, size / 2] });
+}
+
+const INCIDENT = {
+  closure: { color: '#ff3b30', icon: 'octagon-x', size: 30, z: 950 },
+  works: { color: '#ff9500', icon: 'construction', size: 28, z: 850 },
+  short: { color: '#d4a106', icon: 'traffic-cone', size: 24, z: 800 },
+};
+// Popups nicht unter die Bedienelemente oben (Zoom, Hin/Rück) schieben
+const POPUP = { maxWidth: 300, autoPanPaddingTopLeft: [12, 64], autoPanPaddingBottomRight: [12, 12] };
+const incidentClass = (it) => (it.kind === 'closure' || it.kind === 'ramp' ? 'closure' : it.kind === 'short' ? 'short' : 'works');
 
 function priceColor(t) {
   // t: 0 = günstigste, 1 = teuerste
@@ -28,11 +42,15 @@ export class MapView {
     this.stopLayer = L.layerGroup().addTo(this.map);
     this.routeLayer = L.layerGroup().addTo(this.map);
     this.stationLayer = L.layerGroup().addTo(this.map);
+    this.incidentLayer = L.layerGroup().addTo(this.map);
+    this.incidentMarkers = new Map();
     this.map.on('click', (e) => this.showAddMenu(e.latlng));
     this.fitted = false;
   }
 
   invalidate() { setTimeout(() => this.map.invalidateSize(), 50); }
+
+  closePopup() { this.map.closePopup(); }
 
   showAddMenu(latlng) {
     const box = document.createElement('div');
@@ -53,43 +71,82 @@ export class MapView {
     L.popup({ closeButton: false }).setLatLng(latlng).setContent(box).openOn(this.map);
   }
 
+  /** Stopps in Fahrtrichtung (A = Start, Zahlen = Abholpunkte, B = Ende); Umleitungen (via) als eigene Marker. */
   setStops(stops) {
     this.stopLayer.clearLayers();
     const valid = stops.filter((s) => s.lat != null);
-    valid.forEach((s, i) => {
-      const m = L.marker([s.lat, s.lng], { icon: stopIcon(i, valid.length, s.color), draggable: s.draggable !== false, autoPan: true, zIndexOffset: 1000 });
-      m.bindTooltip(s.label || 'Punkt', { direction: 'top', offset: [0, -34] });
+    const count = valid.filter((s) => !s.via).length;
+    let k = 0;
+    for (const s of valid) {
+      const ic = s.via ? badgeIcon('signpost', 'detour') : stopIcon(k++, count, s.color);
+      const m = L.marker([s.lat, s.lng], { icon: ic, draggable: s.draggable !== false, autoPan: true, zIndexOffset: s.via ? 900 : 1000 });
+      m.bindTooltip(s.label || 'Punkt', { direction: 'top', offset: s.via ? [0, -16] : [0, -34] });
+      if (s.popup) m.bindPopup(() => s.popup(), POPUP);
       m.on('dragend', () => this.h.onStopMoved(s.id, m.getLatLng()));
       m.on('contextmenu', () => this.h.onStopRemove(s.id));
       m.addTo(this.stopLayer);
-    });
+    }
   }
 
-  setRoute(route, alternatives = [], selected = 0, returnRoute = null) {
+  setRoute(route, { color = ROUTE_COLOR } = {}) {
     this.routeLayer.clearLayers();
     this.route = route;
-    if (!route) return;
-    alternatives.forEach((alt, idx) => {
-      if (idx === selected) return;
-      const line = L.polyline(alt.coords, { color: '#64748b', weight: 6, opacity: 0.55, dashArray: '8 8' });
-      line.bindTooltip(`Alternative: ${(alt.distance / 1000).toFixed(1)} km · ${Math.round(alt.duration / 60)} min – klicken zum Auswählen`, { sticky: true });
-      line.on('click', (e) => { L.DomEvent.stopPropagation(e); this.h.onSelectAlternative(idx); });
-      line.addTo(this.routeLayer);
-    });
+    if (!route?.coords) return;
     L.polyline(route.coords, { color: '#fff', weight: 9, opacity: 0.9, interactive: false }).addTo(this.routeLayer);
-    const main = L.polyline(route.coords, { color: ROUTE_COLOR, weight: 6, opacity: 0.95 });
-    if (this.h.onInsertVia) {
-      main.bindTooltip('Klicken, um hier einen Zwischenstopp einzufügen', { sticky: true });
-      main.on('click', (e) => {
-        L.DomEvent.stopPropagation(e);
-        this.h.onInsertVia(legIndexAt(route, e.latlng) + 1, e.latlng);
+    L.polyline(route.coords, { color, weight: 6, opacity: 0.95, interactive: false }).addTo(this.routeLayer);
+  }
+
+  /** Sperrungen & Baustellen: Abschnitt als Linie + Marker; Klick zeigt popup(item). */
+  setIncidents(items, { popup } = {}) {
+    this.incidentLayer.clearLayers();
+    this.incidentMarkers = new Map();
+    for (const it of items) {
+      const c = INCIDENT[incidentClass(it)];
+      const pts = it.shown || it.coords; // nur der Teil auf unserer Strecke
+      if (pts.length > 1) {
+        const line = L.polyline(pts, { color: c.color, weight: 7, opacity: 0.9, lineCap: 'butt' });
+        if (popup) line.bindPopup(() => popup(it), POPUP);
+        line.addTo(this.incidentLayer);
+      }
+      const mid = pts[Math.floor(pts.length / 2)];
+      const m = L.marker(mid, { icon: badgeIcon(c.icon, `incident ${incidentClass(it)}`, c.size), zIndexOffset: c.z, title: it.title });
+      if (popup) m.bindPopup(() => popup(it), POPUP);
+      m.addTo(this.incidentLayer);
+      this.incidentMarkers.set(it.id, m);
+    }
+  }
+
+  focusIncident(it) {
+    this.map.fitBounds(L.latLngBounds(it.shown || it.coords).pad(0.6), { maxZoom: 14 });
+    const m = this.incidentMarkers.get(it.id);
+    if (m) setTimeout(() => m.openPopup(), 350);
+  }
+
+  /** Umschalter Hinfahrt / Rückfahrt oben rechts auf der Karte. */
+  setDirControl({ show, dir, onChange }) {
+    if (!this.dirEl) {
+      const Ctl = L.Control.extend({
+        onAdd() {
+          const el = L.DomUtil.create('div', 'map-dir');
+          L.DomEvent.disableClickPropagation(el);
+          L.DomEvent.disableScrollPropagation(el);
+          return el;
+        },
       });
+      this.dirCtl = new Ctl({ position: 'topright' });
+      this.dirCtl.addTo(this.map);
+      this.dirEl = this.dirCtl.getContainer();
     }
-    main.addTo(this.routeLayer);
-    if (returnRoute) { // Rückweg obendrauf, damit er auch auf gemeinsamen Straßen sichtbar ist
-      const back = L.polyline(returnRoute.coords, { color: '#ea580c', weight: 4, opacity: 0.95, dashArray: '10 10', interactive: false });
-      back.addTo(this.routeLayer);
-    }
+    this.dirEl.hidden = !show;
+    this.dirEl.replaceChildren(...[['hin', 'Hinfahrt'], ['rueck', 'Rückfahrt']].map(([d, label]) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = d === dir ? `active ${d}` : d;
+      b.textContent = label;
+      b.setAttribute('aria-pressed', String(d === dir));
+      b.onclick = () => onChange(d);
+      return b;
+    }));
   }
 
   setStations(stations, fuel, selectedId, onSelect) {

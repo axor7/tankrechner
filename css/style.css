@@ -701,3 +701,64 @@ details.more > * + * { margin-top: .6rem; }
 .pay-badge.rejected { color: var(--red); }
 .debt-weeks li.is-pending > label > strong { color: var(--muted); }
 .confirm-item.warn { color: var(--text); }
+
+/* ---------- Strecke: Hin-/Rückfahrt, Sperrungen, Umleitungen ---------- */
+.map-badge { display: grid; place-items: center; width: 100%; height: 100%; border-radius: 50%; color: #fff; border: 2.5px solid #fff; box-shadow: 0 2px 8px rgb(0 0 0 / .35); }
+.map-badge.detour { background: var(--indigo); border-radius: 9px; }
+.map-badge.incident.closure { background: var(--red); }
+.map-badge.incident.works { background: var(--orange); }
+.map-badge.incident.short { background: #d4a106; border-width: 2px; }
+.map-dir { display: flex; background: var(--surface); border-radius: 10px; padding: 3px; gap: 2px; box-shadow: 0 2px 10px rgb(0 0 0 / .2); }
+.map-dir[hidden] { display: none; }
+.map-dir button { font: 600 .82rem var(--font); border: 0; border-radius: 8px; padding: .4rem .75rem; background: transparent; color: var(--muted); cursor: pointer; }
+.map-dir button.active.hin { background: #2563eb; color: #fff; }
+.map-dir button.active.rueck { background: #ea580c; color: #fff; }
+
+.dir-row { gap: .7rem; }
+.dir-row .dir-bar { width: 5px; align-self: stretch; border-radius: 3px; background: var(--fill-2); flex: none; }
+.dir-row.hin.active .dir-bar { background: #2563eb; }
+.dir-row.rueck.active .dir-bar { background: #ea580c; }
+.dir-row .title { font-weight: 600; }
+.dir-row .dir-extra { color: #ea580c; font-weight: 600; }
+.dir-row .dir-check { color: var(--primary); display: grid; }
+.pill { display: inline-flex; align-items: center; gap: .2rem; font-size: .76rem; font-weight: 700; border-radius: 999px; padding: .12rem .45rem; color: #fff; flex: none; }
+.pill-red { background: var(--red); }
+.pill-orange { background: var(--orange); }
+
+.incident-h { font-size: .8rem; text-transform: uppercase; letter-spacing: .03em; color: var(--muted); font-weight: 600; margin: .9rem 0 .35rem; }
+.incident-row { align-items: flex-start; gap: .7rem; text-align: left; }
+.incident-sq { width: 1.75rem; height: 1.75rem; border-radius: 7px; display: grid; place-items: center; color: #fff; flex: none; margin-top: .1rem; }
+.incident-sq.closure { background: var(--red); }
+.incident-sq.works { background: var(--orange); }
+.incident-sq.short { background: #d4a106; }
+.incident-sq.detour { background: var(--indigo); }
+.incident-when { display: block; font-size: .82rem; font-weight: 600; margin-top: .15rem; }
+.incident-when.active, .incident-when.sometimes { color: var(--red); }
+.incident-row.works .incident-when.active, .incident-row.works .incident-when.sometimes,
+.incident-row.short .incident-when.active, .incident-row.short .incident-when.sometimes { color: #c2410c; }
+.incident-when.upcoming { color: var(--muted); }
+@media (prefers-color-scheme: dark) {
+  .incident-row.works .incident-when.active, .incident-row.works .incident-when.sometimes,
+  .incident-row.short .incident-when.active, .incident-row.short .incident-when.sometimes { color: var(--orange); }
+}
+
+.incident-popup { display: flex; flex-direction: column; gap: .3rem; min-width: 200px; max-width: 280px; }
+.incident-kind { display: inline-flex; align-items: center; gap: .3rem; font-size: .76rem; font-weight: 700; text-transform: uppercase; letter-spacing: .02em; }
+.incident-kind.closure { color: var(--red); }
+.incident-kind.works, .incident-kind.short { color: #c2410c; }
+.incident-kind.detour { color: var(--indigo); }
+.incident-status { font-weight: 600; }
+.incident-status.active, .incident-status.sometimes { color: var(--red); }
+.incident-popup details summary { cursor: pointer; color: var(--primary); font-size: .85rem; }
+.incident-lines { margin: .3rem 0 0; padding-left: 1rem; font-size: .8rem; color: var(--muted); max-height: 11rem; overflow: auto; }
+.incident-popup .btn { align-self: flex-start; margin-top: .2rem; }
+.tiny { font-size: .72rem; }
+
+.detour-row { align-items: flex-start; gap: .7rem; }
+.detour-actions { display: flex; align-items: center; gap: .8rem; flex-wrap: wrap; margin-top: .35rem; }
+.detour-actions input[type=date] { width: auto; padding: .2rem .4rem; font-size: .85rem; }
+.detour-form { display: flex; flex-direction: column; gap: .7rem; margin-top: .8rem; padding-top: .8rem; border-top: .5px solid var(--border); }
+.detour-form h3 { margin: 0; font-size: 1rem; }
+.detour-dates > .field { flex: 1; min-width: 0; }
+.spin { animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }

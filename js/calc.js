@@ -76,7 +76,32 @@ export function orderedStops(snap, direction) {
  *  zugeordnete nur, wenn mindestens eine ihrer Personen mitfährt. */
 export function plannedStops(trip, snap, direction) {
   const people = tripPeople(trip);
-  return orderedStops(snap, direction).filter((x) => !x.owners?.length || x.owners.some((o) => people.has(o)));
+  const stops = orderedStops(snap, direction).filter((x) => !x.owners?.length || x.owners.some((o) => people.has(o)));
+  return insertDetours(stops, snap.detours, direction);
+}
+
+/**
+ * Umleitungen einfügen: Jeder Umleitungspunkt kommt zwischen die zwei Stopps, bei denen der Umweg
+ * (Luftlinie) am kleinsten ist. Er gehört niemandem – wer auf dieser Teilstrecke im Auto sitzt, fährt den Umweg mit.
+ * detours: [{ id, dir: 'hin' | 'rueck' | 'both', lat, lng, place }]
+ */
+export function insertDetours(stops, detours, direction = 'hin') {
+  const list = (detours || []).filter((d) => d?.lat != null && (d.dir === 'both' || d.dir === direction));
+  if (!list.length || stops.length < 2) return stops;
+  const out = [...stops];
+  for (const d of list) {
+    const p = [d.lat, d.lng];
+    let best = 1;
+    let bestCost = Infinity;
+    for (let i = 1; i < out.length; i++) {
+      const a = [out[i - 1].lat, out[i - 1].lng];
+      const b = [out[i].lat, out[i].lng];
+      const cost = haversine(a, p) + haversine(p, b) - haversine(a, b);
+      if (cost < bestCost - 1e-9) { bestCost = cost; best = i; }
+    }
+    out.splice(best, 0, { id: `via:${d.id}`, name: d.place ? `Umleitung (${d.place})` : 'Umleitung', lat: d.lat, lng: d.lng, owners: [], via: true, detour: d.id });
+  }
+  return out;
 }
 
 /** Grobe Schätzung (Luftlinie × 1,3), bis die echte Route berechnet ist. */

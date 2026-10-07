@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { buildModel, planFor, withPlanVersion, mergePersons, deriveWeeks, liveWeekSnap, tripSnap, effectivePayments, paymentStates, effectiveOrder, migrateV1 } from '../js/model.js';
-import { calcTrip, routeKey } from '../js/calc.js';
+import { calcTrip, routeKey, plannedStops, insertDetours } from '../js/calc.js';
 import { weeklyDebts } from '../js/debts.js';
 
 const d = (...idx) => Array.from({ length: 7 }, (_, i) => idx.includes(i));
@@ -262,4 +262,45 @@ test('Entfernte Person: vorher mitgefahren zählt, ab dem Entfernen nie mehr –
   assert.ok(m.rides('anna', MO, 'hin'));
   assert.ok(!m.rides('anna', MI, 'hin'));
   assert.ok(!m.dayInfo(MI).riders.hin.includes('anna'));
+});
+
+test('Umleitung: gilt nur von–bis und nur in ihrer Richtung; den Umweg zahlen die, die dort im Auto sitzen', () => {
+  const s = shared();
+  s.persons[1].address = { label: 'Anna', lat: 49.0, lng: 8.6 };
+  s.persons[1].plan = [{ from: '2026-09-01', hin: MOFR, rueck: MOFR, at: 1 }];
+  // Rückfahrt: Umweg zwischen Arbeit (8.9) und Anna (8.6), etwas nördlich – gilt Di bis Mi
+  s.detours = [{ id: 'u1', dir: 'rueck', lat: 49.05, lng: 8.75, place: 'Malsch', from: DI, until: MI }];
+  const m = buildModel(s);
+  const week = liveWeekSnap(s, m.persons, 1);
+  const names = { max: 'Max', anna: 'Anna' };
+  const stopsOn = (date, dir) => {
+    const t = m.trip(date, dir);
+    return plannedStops(t, tripSnap(week, t, {}, names, date), dir).map((x) => x.id);
+  };
+  assert.deepEqual(stopsOn(MO, 'rueck'), ['dest', 'p:anna', 'p:max']);            // vor der Umleitung
+  assert.deepEqual(stopsOn(DI, 'rueck'), ['dest', 'via:u1', 'p:anna', 'p:max']);  // während
+  assert.deepEqual(stopsOn(DI, 'hin'), ['p:max', 'p:anna', 'dest']);              // Hinfahrt nicht betroffen
+  assert.deepEqual(stopsOn('2026-10-01', 'rueck'), ['dest', 'p:anna', 'p:max']); // danach
+  // Eingefrorene Woche von früher (ohne Umleitungen) bleibt gleich
+  const t = m.trip(DI, 'rueck');
+  const old = { ...week };
+  delete old.detours;
+  assert.deepEqual(plannedStops(t, tripSnap(old, t, {}, names, DI), 'rueck').map((x) => x.id), ['dest', 'p:anna', 'p:max']);
+
+  // Kosten: Arbeit→Umweg 20 km, Umweg→Anna 15 km, Anna→Max 20 km (0,10 €/km)
+  const snap = tripSnap(week, t, {}, names, DI);
+  snap.routes[routeKey(plannedStops(t, snap, 'rueck'))] = [{ km: 20 }, { km: 15 }, { km: 20 }];
+  const r = calcTrip(t, snap, {}, 'rueck');
+  assert.equal(Math.round(r.total * 100), 550);
+  assert.equal(Math.round(r.shares.anna * 100), 175); // (2 + 1,5) / 2
+  assert.equal(Math.round(r.shares.max * 100), 375);
+  assert.deepEqual(r.legs.map((l) => l.from), ['Arbeit', 'Umleitung (Malsch)', 'Anna']);
+});
+
+test('Umleitung „beide Richtungen“ wird dort eingefügt, wo der Umweg am kleinsten ist', () => {
+  const stops = [{ id: 'a', lat: 49, lng: 8.4 }, { id: 'b', lat: 49, lng: 8.6 }, { id: 'c', lat: 49, lng: 8.9 }];
+  const d = [{ id: 'x', dir: 'both', lat: 49.02, lng: 8.8 }];
+  assert.deepEqual(insertDetours(stops, d, 'hin').map((x) => x.id), ['a', 'b', 'via:x', 'c']);
+  assert.deepEqual(insertDetours([...stops].reverse(), d, 'rueck').map((x) => x.id), ['c', 'via:x', 'b', 'a']);
+  assert.equal(insertDetours(stops, [{ ...d[0], dir: 'rueck' }], 'hin').length, 3);
 });

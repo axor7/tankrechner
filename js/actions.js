@@ -238,6 +238,67 @@ export function setWeek(pid, monday, mode) {
   log(`${nameOf(pid)} in KW ${isoWeek(monday).week}: ${text}`);
 }
 
+// ---------- Umleitungen (Admin) ----------
+
+const DIR_TEXT = { hin: 'Hinfahrt', rueck: 'Rückfahrt', both: 'Hin- und Rückfahrt' };
+const shortDate = (iso) => fmtDate(iso) + iso.slice(0, 4);
+
+/** Umleitung eintragen: gilt ab `from` (frühestens heute) bis `until` (leer = bis sie beendet wird). */
+export function addDetour({ dir = 'rueck', lat, lng, place, label, note = '', from, until = null }) {
+  if (!isAdmin()) deny();
+  if (lat == null || lng == null) throw new Error('Bitte wähle aus, über welchen Ort die Umleitung führt.');
+  const today = todayIso();
+  const start = from && from > today ? from : today; // nie rückwirkend
+  if (until && until < start) throw new Error('„Gilt bis“ liegt vor „gilt ab“.');
+  const d = { id: uid(), dir, lat, lng, place: place || 'Umleitung', label: label || place || '', note: note.trim(), from: start, until: until || null, at: Date.now(), by: nameOf(me()) };
+  update((s) => { s.detours = [...(s.detours || []), d]; });
+  log(`Umleitung ${DIR_TEXT[dir]} über ${d.place}${d.note ? ` (${d.note})` : ''}: ab ${shortDate(start)}${until ? ` bis ${shortDate(until)}` : ''}`);
+  return d;
+}
+
+/** Umleitungspunkt verschieben (z. B. auf der Karte gezogen) – gilt ab heute. */
+export function moveDetour(id, { lat, lng, place, label }) {
+  if (!isAdmin()) deny();
+  const today = todayIso();
+  const old = (state.detours || []).find((x) => x.id === id);
+  if (!old) return;
+  if ((old.from || today) >= today) {
+    update((s) => { Object.assign(s.detours.find((x) => x.id === id), { lat, lng, place, label, at: Date.now() }); });
+  } else {
+    // Bisherige Tage behalten den alten Punkt: alte Umleitung endet gestern, neue gilt ab heute
+    update((s) => {
+      s.detours.find((x) => x.id === id).until = addDays(today, -1);
+      s.detours.push({ ...old, id: uid(), lat, lng, place, label, from: today, at: Date.now(), by: nameOf(me()) });
+    });
+  }
+  log(`Umleitung verlegt: jetzt über ${place}`);
+}
+
+/** „Gilt bis“ ändern (frühestens heute). */
+export function setDetourUntil(id, until) {
+  if (!isAdmin()) deny();
+  const today = todayIso();
+  const d = (state.detours || []).find((x) => x.id === id);
+  if (!d) return;
+  const value = until ? (until < today ? today : until) : null;
+  if (value && d.from && value < d.from) throw new Error('„Gilt bis“ liegt vor „gilt ab“.');
+  update((s) => { s.detours.find((x) => x.id === id).until = value; });
+  log(`Umleitung über ${d.place}: gilt ${value ? `bis ${shortDate(value)}` : 'ohne Enddatum'}`);
+}
+
+/** Umleitung beenden: ab heute wieder die normale Strecke. Bisherige Fahrten bleiben, wie sie waren. */
+export function endDetour(id) {
+  if (!isAdmin()) deny();
+  const today = todayIso();
+  const d = (state.detours || []).find((x) => x.id === id);
+  if (!d || (d.until && d.until < today)) return; // schon vorbei
+  update((s) => {
+    if ((d.from || today) >= today) s.detours = s.detours.filter((x) => x.id !== id); // hat noch nie gegolten → löschen
+    else s.detours.find((x) => x.id === id).until = addDays(today, -1);
+  });
+  log(`Umleitung über ${d.place} beendet – ab heute wieder die normale Strecke`);
+}
+
 /** Admin-Einstellung ändern und protokollieren. */
 export function adminSet(fn, text) {
   if (!isAdmin()) deny();
