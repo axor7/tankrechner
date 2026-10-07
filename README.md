@@ -11,7 +11,7 @@ Handy: Tab-Leiste unten · Tablet/Computer: Seitenleiste · Karte ein-/ausblendb
 
 **Admin** (wer die Fahrgemeinschaft erstellt; Admin-Rechte lassen sich teilen) – volle Kontrolle:
 - Ziel und Startadresse, **automatisch beste Abholreihenfolge** (Routenplaner), von Hand änderbar; Rückfahrt-Reihenfolge
-- **Umleitungen** eintragen (z. B. wegen einer Sperrung): Richtung, „über“ (Adresse oder auf der Karte tippen), Grund, gilt ab/bis – oder einfach **„Andere Routen anzeigen“**: wie bei Google/Apple Karten bis zu 5 Alternativen (z. B. „über A 4“) mit Kilometern, Fahrzeit und Mehr-km/Mehr-Minuten, nummeriert auf der Karte. Antippen = diese Route fahren (ab heute rechnet die App damit). Wer weiß, wo gesperrt ist, tippt auf der Karte darauf → nur Routen, die daran vorbeiführen.
+- **Umleitungen** eintragen (z. B. wegen einer Sperrung): Richtung, „über“ (Adresse oder auf der Karte tippen), Grund, gilt ab/bis – – oder automatisch: Führt eure Route durch eine gemeldete Sperrung, zeigt die Strecken-Ansicht oben einen roten Hinweis mit **„Ausweichrouten anzeigen“**. Die Umfahrungen rechnet der Routenplaner Valhalla (FOSSGIS) mit der Sperrung als verbotener Stelle; jede wird als komplette Fahrt nachgerechnet (genau diese km und Minuten zählen für die Kosten), Feldwege und Wendemanöver fallen raus. Antippen = diese Route fahren (ab heute). „Andere Routen anzeigen“ geht auch ohne Sperrung, und auf der Karte kann man selbst eine Stelle als gesperrt antippen.
 - Auto, Spritpreis (live an der Strecke), Aufteilungsregel, Mitfahrer (auch ohne App); Entfernen wirkt erst ab heute, vergangene Fahrten bleiben in der Abrechnung
 - Jeden Tag bearbeiten: wer fährt, anderer Fahrer, freier Tag
 - **Ganze Woche auf einmal:** im Kalender auf die KW tippen → je Person „Regelplan / Ganze Woche / Gar nicht“
@@ -77,7 +77,7 @@ Der Key wird nur in deinem Browser gespeichert. Ohne Key funktioniert alles mit 
 
 Ohne Anmeldung liegen alle Daten (Personen, Fahrten, Einstellungen) nur im `localStorage` deines Browsers. In einer Fahrgemeinschaft liegen die gemeinsamen Daten in der Supabase-Datenbank; lesen und ändern können sie nur deren Mitglieder. Tankerkönig-Key und Messwerte bleiben immer auf dem Gerät.
 Über das Menü ☰ kannst du sie als JSON exportieren/importieren, z. B. um sie auf ein anderes Gerät zu übertragen.
-Externe Dienste: OpenStreetMap (Karte), OSRM (Routing), Photon (Adresssuche), Tankerkönig (Preise), Autobahn GmbH des Bundes (Sperrungen & Baustellen, [verkehr.autobahn.de](https://verkehr.autobahn.de/o/autobahn/)).
+Externe Dienste: OpenStreetMap (Karte), OSRM (Routing), Valhalla/FOSSGIS (Umleitungen um Sperrungen), Photon (Adresssuche), Tankerkönig (Preise), Autobahn GmbH des Bundes (Sperrungen & Baustellen, [verkehr.autobahn.de](https://verkehr.autobahn.de/o/autobahn/)).
 
 Sperrungen auf Bundes-, Landes- und Kreisstraßen gibt es nicht als offene Echtzeitdaten. Der Routenplaner (OSRM) kennt nur Sperrungen, die in OpenStreetMap eingetragen sind (meist längere Baustellen) – für alles andere eine Umleitung eintragen.
 
@@ -109,7 +109,7 @@ js/sync.js          Synchronisation mit Konfliktbehandlung (getestet)
 js/account.js       Konto, Fahrgemeinschaft, Rollen, Profile
 js/cloud.js         Supabase-Anbindung
 js/pay.js           PayPal.me-Links und Nachrichten (getestet)
-js/detours.js       Alternativrouten auswählen: echter anderer Weg, verschieden, an Sperrungen vorbei (getestet)
+js/detours.js       Ausweichrouten: Sperrung meiden (Valhalla), nachrechnen (OSRM), Feldwege/Wenden aussortieren (getestet)
 js/traffic.js       Sperrungen & Baustellen (Autobahn GmbH): Zeiten auslesen, der Strecke und Fahrtrichtung zuordnen (getestet)
 js/tab-fuel.js      Auto, Spritpreis, Tankstellen, beste Tankzeit
 js/address.js       Adresssuche

@@ -1,44 +1,61 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { nearestOnLine, sidePoints, pickAlternatives, hasSpur, overlap, newRoads } from '../js/detours.js';
+import { nearestOnLine, usesClosure, divergence, newRoads, bearingAt, avoidFor, searchAlternatives } from '../js/detours.js';
 
-// Normale Strecke: gerade von West nach Ost bei 49° N (ca. 14,6 km)
+// Normale Strecke: gerade von West nach Ost bei 49° N (ca. 14,6 km); gesperrt ist das Stück bei 8,5° O
 const line = (lat, from, to, n = 41) => Array.from({ length: n }, (_, i) => [lat, from + ((to - from) * i) / (n - 1)]);
-const main = { coords: line(49, 8.4, 8.6), distance: 14600, duration: 900 };
-// Umweg: nördlich über 49,02 (ca. 2,2 km neben der Strecke)
-const north = [[49, 8.4], ...line(49.02, 8.45, 8.55, 21), [49, 8.6]];
+const baseCoords = line(49, 8.4, 8.6);
+const closure = { coords: line(49, 8.495, 8.505, 6) };
+const north = [[49, 8.4], ...line(49.02, 8.45, 8.55, 21), [49, 8.6]];   // Umfahrung nördlich (ca. 2,2 km daneben)
+const south = [[49, 8.4], ...line(48.98, 8.45, 8.55, 21), [49, 8.6]];   // Umfahrung südlich – aber über Feldwege
+const through = [...line(49, 8.4, 8.5, 21), [49.004, 8.52], ...line(49, 8.53, 8.6, 15)]; // fährt durch die Sperrung
 
-test('Abstand zur Linie und Testpunkte senkrecht zur Fahrtrichtung', () => {
-  assert.ok(Math.abs(nearestOnLine([49.01, 8.5], main.coords).d - 1105) < 15);
-  const pts = sidePoints(main.coords, 20, [1, 3]);
-  assert.equal(pts.length, 4);
-  for (const p of pts) {
-    assert.ok(Math.abs(p.lng - 8.5) < 1e-6); // genau neben der Stelle
-    assert.ok(Math.abs(nearestOnLine([p.lat, p.lng], main.coords).d - p.km * 1000) < 20);
-  }
+test('Liegt eine Route auf der Sperrung? Abschnitt und angetippte Stelle', () => {
+  assert.ok(usesClosure(baseCoords, closure));
+  assert.ok(!usesClosure(north, closure));
+  assert.ok(usesClosure(baseCoords, { lat: 49.0002, lng: 8.5 }));
+  assert.ok(!usesClosure(north, { lat: 49.0002, lng: 8.5 }));
+  assert.ok(Math.abs(nearestOnLine([49.01, 8.5], baseCoords).d - 1105) < 15);
 });
 
-test('Alternativen: echter anderer Weg, nicht durch die Sperrung, keine Stichfahrten, keine Doppelten', () => {
-  const m = { ...main, refs: { 'A 71': 14600 } };
-  const closure = { lat: 49, lng: 8.5 };
-  const through = { coords: [...line(49, 8.4, 8.5, 11), [49.003, 8.5], ...line(49, 8.5, 8.6, 11)], distance: 15000, duration: 960 }; // fährt durch
-  const good = { coords: north, distance: 17000, duration: 1080, refs: { 'B 7': 12000, 'A 71': 2000 } };
-  const same = { coords: north.map(([a, b]) => [a + 0.0001, b]), distance: 17100, duration: 1100 }; // gleiche Route
-  const up = Array.from({ length: 6 }, (_, k) => [49 + k * 0.002, 8.5]);
-  const spur = { coords: [...line(49, 8.4, 8.49, 10), ...up, ...up.slice(0, -1).reverse(), ...line(49, 8.51, 8.6, 10)], distance: 16700, duration: 1000, viaIdx: 15 };
-  const wiggle = { coords: [...line(49, 8.4, 8.5, 21), [49.0015, 8.505], ...line(49, 8.51, 8.6, 19)], distance: 14700, duration: 905 }; // nur ein Schlenker
-  assert.ok(hasSpur(spur.coords, spur.viaIdx));
-  const list = pickAlternatives([{ main: m, cands: [through, same, spur, wiggle, good] }], { closure });
-  assert.equal(list.length, 1);
-  assert.equal(Math.round(list[0].extraKm * 10) / 10, 2.4);
-  assert.equal(list[0].extraMin, 3);
-  assert.deepEqual(list[0].roads, ['B 7']);
-  assert.ok(list[0].lat > 49.015); // Wegpunkt liegt auf der Ausweichstraße
-  assert.ok(overlap(good.coords, same.coords) > 0.85);
-  // Ohne Sperrung zählt auch der Weg „durch“ nicht – er ist praktisch die normale Strecke
-  assert.equal(pickAlternatives([{ main: m, cands: [through, good, same] }]).length, 1);
+test('Sperrfläche für Valhalla: nur das mittlere Stück; Stelle → exclude_locations', () => {
+  const a = avoidFor(closure);
+  assert.equal(a.polygons.length, 1);
+  const ring = a.polygons[0];
+  assert.deepEqual(ring[0], ring[ring.length - 1]); // geschlossen
+  assert.ok(Math.min(...ring.map(([lng]) => lng)) > 8.496); // Enden ausgespart
+  assert.deepEqual(avoidFor({ lat: 49, lng: 8.5 }), { locations: [{ lat: 49, lng: 8.5 }] });
+  assert.deepEqual(avoidFor(null), {});
 });
 
-test('Straßennamen: nur die, die die normale Strecke kaum fährt', () => {
+test('Fahrtrichtung, abweichendes Stück, neue Straßen', () => {
+  assert.ok(Math.abs(bearingAt(baseCoords, 20) - 90) < 1); // nach Osten
+  assert.ok(divergence(north, baseCoords).len > 6000);
+  assert.ok(divergence(baseCoords, baseCoords).len === 0);
   assert.deepEqual(newRoads({ 'B 7': 9000, 'A 71': 3000, 'K 14': 500 }, { 'A 71': 40000 }), ['B 7']);
+});
+
+// Nachgebaute Routenplaner
+const stops = [{ lat: 49, lng: 8.4 }, { lat: 49, lng: 8.6 }];
+const osrm = async (pts) => {
+  const via = pts.find((p) => p.via);
+  if (via && via.lat > 49.01) return [{ coords: north, distance: 17000, duration: 1080, slow: 0, refs: { 'B 7': 12000 } }];
+  if (via && via.lat < 48.99) return [{ coords: south, distance: 16000, duration: 3000, slow: 4000, refs: {} }];
+  return [{ coords: baseCoords, distance: 14600, duration: 900, slow: 0, refs: { 'A 71': 14600 }, wpIdx: [0, 40] }];
+};
+const valhalla = async () => [
+  { coords: through, distance: 14800, duration: 950, refs: {} },
+  { coords: south, distance: 16000, duration: 1200, refs: { 'L 1': 12000 } },
+  { coords: north, distance: 16900, duration: 1100, refs: { 'B 7': 12000, 'A 71': 2000 } },
+];
+
+test('Ausweichrouten: nur an der Sperrung vorbei, ohne Feldwege, mit den nachgerechneten Zahlen', async () => {
+  const res = await searchAlternatives(stops, { dir: 'rueck', closure, fetchRoute: osrm, valhallaRoute: valhalla });
+  assert.equal(res.base.usesClosure, true);
+  assert.equal(res.list.length, 1);
+  const [x] = res.list;
+  assert.deepEqual(x.roads, ['B 7']);
+  assert.equal(Math.round(x.extraKm * 10) / 10, 2.4); // Werte aus der Nachrechnung (OSRM), nicht aus Valhalla
+  assert.equal(x.extraMin, 3);
+  assert.ok(x.lat > 49.015 && Math.abs(x.bearing - 90) < 5); // Wegpunkt auf der Umfahrung, in Fahrtrichtung
 });

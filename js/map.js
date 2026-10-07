@@ -132,7 +132,8 @@ export class MapView {
       }).bindTooltip(`Vorschlag ${k + 1}: über ${x.place || ''}`).addTo(this.suggestLayer);
     });
     if (closure) {
-      L.marker([closure.lat, closure.lng], { icon: badgeIcon('octagon-x', 'incident closure', 30), zIndexOffset: 1200 })
+      const p = closure.coords?.length ? closure.coords[Math.floor(closure.coords.length / 2)] : [closure.lat, closure.lng];
+      L.marker(p, { icon: badgeIcon('octagon-x', 'incident closure', 30), zIndexOffset: 1200 })
         .bindTooltip('Gesperrte Stelle').addTo(this.suggestLayer);
     }
   }

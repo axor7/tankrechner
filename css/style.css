@@ -774,3 +774,14 @@ details.more > * + * { margin-top: .6rem; }
 .variant-row.pickable { cursor: pointer; }
 .variant-row.pickable:active { background: var(--fill); }
 .sugg-pin { width: 24px; height: 24px; border-radius: 50%; color: #fff; font: 700 12px var(--font); display: grid; place-items: center; border: 2px solid #fff; box-shadow: 0 1px 6px rgb(0 0 0 / .35); }
+
+/* Sperrung auf der Strecke */
+.closure-card { box-shadow: 0 0 0 1.5px var(--red) inset; }
+.closure-item + .closure-item { border-top: .5px solid var(--border); margin-top: .8rem; padding-top: .8rem; }
+.closure-head { display: flex; align-items: center; gap: .45rem; color: var(--red); font-size: 1.02rem; }
+.closure-title { margin-top: .35rem; font-weight: 600; }
+.closure-when { color: var(--red); font-weight: 600; margin-top: .2rem; }
+.closure-note { margin: .6rem 0 .5rem; }
+.closure-ok { display: flex; align-items: center; gap: .35rem; color: var(--good-text, #248a3d); font-weight: 600; margin: .6rem 0 0; }
+.closure-card.ok { box-shadow: 0 0 0 1.5px var(--green) inset; }
+.closure-card.ok .closure-head, .closure-card.ok .closure-when { color: var(--muted); }

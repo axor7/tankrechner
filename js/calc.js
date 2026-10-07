@@ -99,7 +99,7 @@ export function insertDetours(stops, detours, direction = 'hin') {
       const cost = haversine(a, p) + haversine(p, b) - haversine(a, b);
       if (cost < bestCost - 1e-9) { bestCost = cost; best = i; }
     }
-    out.splice(best, 0, { id: `via:${d.id}`, name: d.place ? `Umleitung (${d.place})` : 'Umleitung', lat: d.lat, lng: d.lng, owners: [], via: true, detour: d.id });
+    out.splice(best, 0, { id: `via:${d.id}`, name: d.place ? `Umleitung (${d.place})` : 'Umleitung', lat: d.lat, lng: d.lng, bearing: d.bearing ?? null, owners: [], via: true, detour: d.id });
   }
   return out;
 }

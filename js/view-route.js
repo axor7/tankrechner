@@ -4,6 +4,7 @@ import { effectiveOrder, isActive } from './model.js';
 import { isAdmin } from './account.js';
 import { me, adminSet, setAddress, addDetour, endDetour, setDetourUntil, chooseDetour } from './actions.js';
 import { SOURCE, KIND_LABEL, isClosure, statusText, timeStatus, fmtWhen } from './traffic.js';
+import { usesClosure } from './detours.js';
 import { priceCard, timeCard, costCard } from './tab-fuel.js';
 import { addressInput } from './address.js';
 import { h, fmtKm, fmtDuration, fmtDate, toast } from './ui.js';
@@ -31,7 +32,14 @@ export function detourText(d, today = todayIso()) {
   return `gilt seit ${fmtDate(d.from || today)}${until} · ${left <= 0 ? 'nur noch heute' : `noch ${left + 1} Tage`}`;
 }
 
-const cleanTitle = (it) => it.title.replace(/^A\d+\s*\|\s*/, '').replace(/ - /g, ' – ');
+/** Lesbarer Titel: „A8 | Karlsruhe - Pforzheim“ → „Karlsruhe – Pforzheim“; Auffahrten aus dem Untertitel;
+ *  interne Kennungen („EF_2026-036728_bFR_AS“) weg. */
+function cleanTitle(it) {
+  const ramp = it.kind === 'ramp' && (it.subtitle || '').match(/^(?:Von\s+)?(?:Auffahrt auf die A\d+:\s*)?AS\s+(.+?)\s*(?:\(aus Richtung\s+(.+?)\))?\s*nach\s+(A\s?\d+)/i);
+  if (ramp) return `Auffahrt ${ramp[1]} auf die ${ramp[3].replace(/\s/, '')}${ramp[2] ? ` (aus Richtung ${ramp[2]})` : ''}`;
+  const t = it.title.replace(/^A\d+\s*\|\s*/, '').replace(/^A\d+\s+/, '').replace(/\b[A-Z]{2}_\d{4}-\S+\s*/g, '').replace(/_/g, ' ').replace(/ - /g, ' – ').trim();
+  return t || it.title;
+}
 const arrow = (s) => s.replace(/\s*->\s*/g, ' → ');
 const clock = (ms) => new Date(ms).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
 const incidentCls = (it) => (isClosure(it) ? 'closure' : it.kind === 'short' ? 'short' : 'works');
@@ -226,7 +234,7 @@ function routeChoice(dir, c, admin, today) {
   const done = (msg) => { c.clearSuggestions(); c.refreshRoute(); toast(msg, 'ok'); };
   const pickSaved = (id) => safe(() => { chooseDetour(dir, id); c.refreshRoute(); toast(id ? 'Route gewählt – gilt ab heute' : 'Ab heute wieder die normale Strecke', 'ok'); });
   const pickNew = (x) => safe(() => {
-    const d = addDetour({ dir, lat: x.lat, lng: x.lng, label: x.label, place: x.place, note: x.city ? `bei ${x.city}` : '', use: false });
+    const d = addDetour({ dir, lat: x.lat, lng: x.lng, bearing: x.bearing, label: x.label, place: x.place, note: sg?.closure ? 'Umfahrung der Sperrung' : x.city ? `bei ${x.city}` : '', use: false });
     chooseDetour(dir, d.id);
     done(`Ihr fahrt jetzt über ${x.place} – gilt ab heute`);
   });
@@ -257,11 +265,56 @@ function routeChoice(dir, c, admin, today) {
     }),
     ...(sug?.list || []).map((x, k) => row({
       on: false, key: `s${k}`, badge: h('span', { class: 'sugg-pin', style: { background: SUGG_COLORS[k % SUGG_COLORS.length] } }, String(k + 1)),
-      title: `über ${x.place}`, nums: sug.base ? `${fmtKm(sug.base.km + x.extraKm)} · ${fmtDuration((sug.base.min + x.extraMin) * 60)}` : '',
+      title: `über ${x.place}`, nums: `${fmtKm(x.km)} · ${fmtDuration(x.min * 60)}`,
       extra: fmtX(x.extraKm, x.extraMin), onPick: () => pickNew(x),
     })),
   ];
   return h('div', { class: 'list' }, rows);
+}
+
+/** Gemeldete Sperrungen auf der gewählten Richtung (gilt jetzt oder in den nächsten 3 Tagen). */
+function closuresOn(c, dir) {
+  const t = c.traffic();
+  const soon = Date.now() + 3 * 864e5;
+  return (t[dir] || []).filter((it) => {
+    if (!isClosure(it)) return false;
+    const st = timeStatus(it.times);
+    return st.state !== 'upcoming' || (st.from && st.from.getTime() < soon);
+  });
+}
+
+/** Roter Hinweis oben: Sperrung auf eurer Strecke – führt die gefahrene Route hindurch? */
+function closureBanner(c) {
+  const dir = c.routeDir();
+  const list = closuresOn(c, dir);
+  if (!list.length) return null;
+  const route = c.displayRoute(dir);
+  const normal = c.displayRoute(dir, []);
+  const chosen = (state.detours || []).find((d) => (d.dir === dir || d.dir === 'both') && d.use !== false && (!d.until || d.until >= todayIso()) && (!d.from || d.from <= todayIso()));
+  const admin = isAdmin();
+  const sg = c.suggestions();
+  const searching = sg?.loading && sg.dir === dir;
+  const rows = list.map((it) => {
+    const zone = { coords: it.shown || it.coords, title: it.title };
+    const passes = !!route?.coords && usesClosure(route.coords, zone);
+    const normalPasses = !!normal?.coords && usesClosure(normal.coords, zone);
+    return { it, zone, passes, avoided: !passes && normalPasses };
+  }).filter((x) => x.passes || x.avoided); // nur Sperrungen, die uns wirklich betreffen
+  if (!rows.length) return null;
+  const bad = rows.some((x) => x.passes);
+  return h('section', { class: `card closure-card ${bad ? '' : 'ok'}` }, rows.map(({ it, zone, passes }) => {
+    return h('div', { class: 'closure-item' },
+      h('div', { class: 'closure-head' }, icon(passes ? 'octagon-x' : 'check', { size: 20 }), h('strong', {}, passes ? `Sperrung auf eurer ${DIR_TEXT[dir]}` : `Sperrung umfahren · ${DIR_TEXT[dir]}`)),
+      h('div', { class: 'closure-title' }, cleanTitle(it), h('span', { class: 'muted' }, ` · ${it.road}`)),
+      it.subtitle && it.kind !== 'ramp' ? h('div', { class: 'muted small' }, it.subtitle.includes('->') ? `Richtung ${arrow(it.subtitle)}` : it.subtitle) : null,
+      h('div', { class: 'closure-when' }, statusText(it)),
+      passes
+        ? [h('p', { class: 'closure-note' }, 'Eure Route führt durch diese Sperrung.'),
+          admin ? h('button', { type: 'button', class: 'btn btn-primary', disabled: !!searching, onclick: () => c.findDetours(dir, zone) },
+            icon('route', { size: 17 }), searching ? `Ausweichrouten werden berechnet … ${sg.total ? `${Math.round((sg.done / sg.total) * 100)} %` : ''}` : 'Ausweichrouten anzeigen')
+            : h('p', { class: 'hint small' }, 'Der Admin kann eine Ausweichroute auswählen.')]
+        : h('p', { class: 'closure-ok' }, icon('check', { size: 15 }), chosen ? `Ihr umfahrt die Sperrung über ${chosen.place}.` : 'Eure Route fährt an der Sperrung vorbei.'));
+  }));
 }
 
 function detoursCard(c) {
@@ -269,21 +322,27 @@ function detoursCard(c) {
   const today = todayIso();
   const dir = c.routeDir();
   const hasSaved = (state.detours || []).some((d) => (d.dir === dir || d.dir === 'both') && (!d.until || d.until >= today));
-  if (!admin && !hasSaved) return null;
   const sg = c.suggestions();
   const sug = sg && sg.dir === dir ? sg : null;
+  if (!admin && !hasSaved) return null;
+  if (admin && !hasSaved && !sug && !draft) {
+    // nichts gewählt, nichts gesucht: nur ein kleiner Einstieg
+    return h('section', { class: 'card', id: 'detours' },
+      h('div', { class: 'row between' },
+        h('span', {}, h('strong', {}, 'Andere Route fahren?'), h('span', { class: 'hint small', style: { display: 'block', margin: 0 } }, 'Zeigt Alternativen mit km und Fahrzeit – wie bei Google Maps.')),
+        h('button', { type: 'button', class: 'btn btn-small', onclick: () => c.findDetours(dir, null) }, icon('route', { size: 15 }), 'Anzeigen')));
+  }
   return h('section', { class: 'card', id: 'detours' },
-    h('h2', {}, `Welche Route fahrt ihr? · ${DIR_TEXT[dir]}`),
-    admin ? h('p', { class: 'hint small', style: { marginTop: 0 } }, 'Gibt es eine Sperrung? Lass dir andere Routen zeigen und tippe die an, die ihr fahrt – ab heute rechnet die App damit.') : null,
+    h('h2', {}, `Route · ${DIR_TEXT[dir]}`),
+    sug && !sug.loading && sug.list.length ? h('p', { class: 'hint small', style: { marginTop: 0 } },
+      sug.closure ? 'Alle Vorschläge fahren an der Sperrung vorbei. Tippe die Route an, die ihr fahrt – ab heute rechnet die App damit.' : 'Tippe die Route an, die ihr fahrt – ab heute rechnet die App damit.') : null,
     routeChoice(dir, c, admin, today),
-    sug?.loading ? h('p', { class: 'hint' }, `Andere Routen werden gesucht … ${sug.total ? `${Math.round((sug.done / sug.total) * 100)} %` : ''}`) : null,
-    sug && !sug.loading && sug.error ? h('p', { class: 'callout' }, `Keine anderen Routen gefunden: ${sug.error}.`) : null,
-    sug && !sug.loading && !sug.error && !sug.list.length ? h('p', { class: 'callout' }, 'Keine sinnvollen anderen Routen gefunden.') : null,
+    sug?.loading ? h('p', { class: 'hint' }, `Routen werden berechnet … ${sug.total ? `${Math.round((sug.done / sug.total) * 100)} %` : ''}`) : null,
+    sug && !sug.loading && sug.error ? h('p', { class: 'callout' }, `Keine Routen gefunden: ${sug.error}.`) : null,
+    sug && !sug.loading && !sug.error && !sug.list.length ? h('p', { class: 'callout' }, sug.closure ? 'Keine Umfahrung gefunden.' : 'Keine sinnvollen anderen Routen gefunden.') : null,
     admin ? h('div', { class: 'row gap wrap', style: { marginTop: '.6rem' } },
-      h('button', { type: 'button', class: 'btn btn-primary', disabled: !!sug?.loading, onclick: () => c.findDetours(dir, null) },
-        icon('route', { size: 17 }), sug && !sug.loading ? 'Neu suchen' : 'Andere Routen anzeigen'),
-      sug && !sug.loading && sug.list.length ? h('button', { type: 'button', class: 'btn', onclick: () => c.clearSuggestions() }, 'Ausblenden') : null) : null,
-    admin ? h('p', { class: 'hint small' }, 'Tipp: Die Nummern stehen auch auf der Karte. Wisst ihr, wo gesperrt ist, tippt auf der Karte darauf → „Hier ist gesperrt – Routen drumherum“. ',
+      sug?.loading ? null : h('button', { type: 'button', class: 'btn btn-small', onclick: () => c.findDetours(dir, sug?.closure || null) }, icon('route', { size: 15 }), sug ? 'Neu berechnen' : 'Andere Routen anzeigen'),
+      sug && !sug.loading ? h('button', { type: 'button', class: 'btn btn-small', onclick: () => c.clearSuggestions() }, 'Vorschläge ausblenden') : null,
       draft ? null : h('button', { type: 'button', class: 'link small', onclick: () => openDetourForm({}) }, 'Umleitung selbst eintragen')) : null,
     admin && draft ? detourForm(c) : null,
   );
@@ -325,7 +384,7 @@ function adminRouteView(el, c) {
   };
   const hasRoute = driver?.address?.lat && state.destination?.lat;
 
-  if (hasRoute) el.append(...[directionCard(c), detoursCard(c), trafficCard(c)].filter(Boolean));
+  if (hasRoute) el.append(...[closureBanner(c), directionCard(c), detoursCard(c), trafficCard(c)].filter(Boolean));
   el.append(
     h('section', { class: 'card' },
       h('h2', {}, 'Ziel'),
@@ -388,7 +447,7 @@ function memberRouteView(el, c) {
   const destRow = (label) => h('div', { class: 'list-row' }, icon('map-pin', { size: 16 }),
     h('span', { class: 'grow' }, h('strong', {}, label), h('small', { class: 'muted' }, ` · ${destLabel}`)));
 
-  if (driver?.address?.lat && state.destination?.lat) el.append(...[directionCard(c), detoursCard(c), trafficCard(c)].filter(Boolean));
+  if (driver?.address?.lat && state.destination?.lat) el.append(...[closureBanner(c), directionCard(c), detoursCard(c), trafficCard(c)].filter(Boolean));
   el.append(
     h('section', { class: 'card' },
       h('h2', {}, dir === 'rueck' ? 'Reihenfolge Rückfahrt' : 'Reihenfolge Hinfahrt'),

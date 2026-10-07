@@ -261,6 +261,7 @@ export function alongRoute(items, coords, { maxDist = 35 } = {}) {
       if (hits[k] && hits[k - 1]) overlap += len;
     }
     if (total > 50 && overlap < Math.min(200, total * 0.5)) continue; // nur gestreift (z. B. eine Auffahrt, die wir nicht nehmen)
+    if (item.kind === 'ramp' && total > 50 && overlap < total * 0.6) continue; // Auf-/Abfahrt: nur, wenn wir sie wirklich fahren
     if (total <= 50 && near.length < Math.ceil(hits.length / 2)) continue;
     const first = near[0].pos;
     const last = near[near.length - 1].pos;

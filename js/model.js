@@ -153,7 +153,7 @@ export function liveWeekSnap(shared, persons, price) {
     manualKm: Number(shared.manualKm) || 0,
     split: { ...(shared.split || {}) },                 // Aufteilungsregel gilt pro Woche
     // Umleitungen (gelten je Datum von–bis; eingefrorene Wochen behalten ihre)
-    detours: (shared.detours || []).filter((d) => d?.lat != null).map(({ id, dir, lat, lng, place, from, until, use }) => ({ id, dir, lat, lng, place, from, until, use })),
+    detours: (shared.detours || []).filter((d) => d?.lat != null).map(({ id, dir, lat, lng, bearing, place, from, until, use }) => ({ id, dir, lat, lng, bearing, place, from, until, use })),
     at: Date.now(),
   };
 }

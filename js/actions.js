@@ -250,7 +250,7 @@ const usedNow = (d, today) => d.use !== false && (!d.until || d.until >= today);
  * Umleitung eintragen: gilt ab `from` (frühestens heute) bis `until` (leer = bis sie beendet wird).
  * Wird in der Richtung schon eine Umleitung gefahren, kommt die neue als Variante dazu (use: false) – auswählen mit chooseDetour.
  */
-export function addDetour({ dir = 'rueck', lat, lng, place, label, note = '', from, until = null, use }) {
+export function addDetour({ dir = 'rueck', lat, lng, bearing = null, place, label, note = '', from, until = null, use }) {
   if (!isAdmin()) deny();
   if (lat == null || lng == null) throw new Error('Bitte wähle aus, über welchen Ort die Umleitung führt.');
   const today = todayIso();
@@ -258,7 +258,7 @@ export function addDetour({ dir = 'rueck', lat, lng, place, label, note = '', fr
   if (until && until < start) throw new Error('„Gilt bis“ liegt vor „gilt ab“.');
   const taken = (state.detours || []).some((x) => hitsDir(x, dir) && usedNow(x, today));
   const d = {
-    id: uid(), dir, lat, lng, place: place || 'Umleitung', label: label || place || '', note: note.trim(), from: start, until: until || null,
+    id: uid(), dir, lat, lng, bearing, place: place || 'Umleitung', label: label || place || '', note: note.trim(), from: start, until: until || null,
     use: use ?? !taken, at: Date.now(), by: nameOf(me()),
   };
   update((s) => { s.detours = [...(s.detours || []), d]; });
@@ -299,12 +299,12 @@ export function moveDetour(id, { lat, lng, place, label }) {
   const old = (state.detours || []).find((x) => x.id === id);
   if (!old) return;
   if ((old.from || today) >= today) {
-    update((s) => { Object.assign(s.detours.find((x) => x.id === id), { lat, lng, place, label, at: Date.now() }); });
+    update((s) => { Object.assign(s.detours.find((x) => x.id === id), { lat, lng, place, label, bearing: null, at: Date.now() }); });
   } else {
     // Bisherige Tage behalten den alten Punkt: alte Umleitung endet gestern, neue gilt ab heute
     update((s) => {
       s.detours.find((x) => x.id === id).until = addDays(today, -1);
-      s.detours.push({ ...old, id: uid(), lat, lng, place, label, from: today, at: Date.now(), by: nameOf(me()) });
+      s.detours.push({ ...old, id: uid(), lat, lng, place, label, bearing: null, from: today, at: Date.now(), by: nameOf(me()) });
     });
   }
   log(`Umleitung verlegt: jetzt über ${place}`);

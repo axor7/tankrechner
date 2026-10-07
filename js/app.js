@@ -1,14 +1,14 @@
 // Einstiegspunkt: App-Gerüst (Navigation je Rolle, Karte), Strecke des Admins, Hintergrund-Berechnungen.
 import { state, update, subscribe, replaceState, defaultState, model, personById, activePersons, allRoutes, liveSnap, todayIso, SHARED_KEYS } from './state.js';
-import { reverseGeocode, fetchRoute, fetchRouteInfo, optimizeOrder } from './api.js';
+import { reverseGeocode, fetchRoute, fetchRouteInfo, valhallaRoute, optimizeOrder } from './api.js';
 import { MapView } from './map.js';
 import { FUELS, plannedStops, routeKey, mondayOf, addDays, hasOwners, insertDetours } from './calc.js';
-import { nearestOnLine, sidePoints, pickAlternatives } from './detours.js';
+import { searchAlternatives, usesClosure } from './detours.js';
 import { effectiveOrder, isActive, activeDetours } from './model.js';
 import { h, debounce, toast } from './ui.js';
 import { icon } from './icons.js';
 import { stationSelected, startAutoRefresh } from './tab-fuel.js';
-import { autobahnRefs, roadEvents, alongRoute, isCurrent } from './traffic.js';
+import { autobahnRefs, roadEvents, alongRoute, isCurrent, isClosure } from './traffic.js';
 import { renderHome } from './view-home.js';
 import { renderTrips, renderSheet } from './view-trips.js';
 import { renderCosts } from './view-costs.js';
@@ -134,15 +134,16 @@ const refreshRoute = debounce(async (force = false) => {
 const localRoutes = new Map(); // Schlüssel → Route, die dieses Gerät selbst berechnet hat (z. B. Mitfahrer)
 const loadingRoutes = new Set();
 
-/** Route einer Richtung für die Karte: die gemeinsame des Admins, sonst selbst berechnet. */
-function displayRoute(dir) {
-  const stops = fullStops(dir);
+/** Route einer Richtung für die Karte: die gemeinsame des Admins, sonst selbst berechnet.
+ *  detours: [] = die normale Strecke ohne Umleitung. */
+function displayRoute(dir, detours) {
+  const stops = detours ? fullStops(dir, detours) : fullStops(dir);
   if (stops.length < 2) return null;
   const key = coordsKey(stops);
   const shared = dir === 'rueck' ? state.returnRoute : state.route;
   if (shared?.key === key) return shared;
   if (localRoutes.has(key)) return localRoutes.get(key);
-  if (!isAdmin() && !loadingRoutes.has(key)) {
+  if ((!isAdmin() || detours) && !loadingRoutes.has(key)) {
     loadingRoutes.add(key);
     fetchRoute(stops)
       .then(([r]) => { localRoutes.set(key, { key, ...r }); requestRender(); })
@@ -193,26 +194,11 @@ function variantInfo(dir, detour = null) {
 // Andere Routen (Admin): wie bei Google/Apple Karten – Ergebnis in der Strecken-Ansicht und auf der Karte
 let suggestions = null; // { dir, closure, loading, done, total, list, base, error }
 
-/** Aufgaben mit höchstens n gleichzeitigen Anfragen ausführen (fehlgeschlagene → null). */
-async function pool(tasks, n, onDone) {
-  const out = [];
-  let next = 0;
-  await Promise.all(Array.from({ length: n }, async () => {
-    while (next < tasks.length) {
-      const k = next++;
-      try { out[k] = await tasks[k](); } catch { out[k] = null; }
-      onDone?.();
-    }
-  }));
-  return out;
-}
-
 const cityOf = (label = '') => (String(label).split(',').map((x) => x.trim()).filter(Boolean).pop() || '').replace(/^\d{4,5}\s*/, '');
 
 /**
- * Andere Routen suchen: je Teilstück die Alternativen des Routenplaners plus Testpunkte links und rechts entlang der Strecke;
- * übrig bleiben die schnellsten, die auf mehreren Kilometern einen anderen Weg nehmen.
- * closure (optional): markierte Sperrung – dann nur Routen, die daran vorbeiführen.
+ * Ausweichrouten suchen (wie bei Google/Apple Karten). closure: gesperrter Abschnitt { coords, title }
+ * (Autobahn-Meldung) oder { lat, lng } (auf der Karte angetippt); ohne: allgemeine Alternativen.
  */
 async function findDetours(dir, closure = null) {
   if (!isAdmin()) return;
@@ -221,37 +207,16 @@ async function findDetours(dir, closure = null) {
   try {
     const stops = fullStops(dir, []);
     if (stops.length < 2) throw new Error('Start und Ziel fehlen');
-    const legs = stops.slice(1).map((b, i) => ({ a: stops[i], b }));
-    const mains = await Promise.all(legs.map((l) => fetchRoute([l.a, l.b], { alternatives: true, steps: true })));
-    let closureLeg = -1;
-    if (closure) {
-      let best = Infinity;
-      mains.forEach(([m], i) => { const d = nearestOnLine([closure.lat, closure.lng], m.coords).d; if (d < best) { best = d; closureLeg = i; } });
-      if (best > 500) throw new Error('die markierte Stelle liegt nicht auf eurer Strecke');
-    }
-    const tasks = legs.map((l, i) => {
-      const main = mains[i][0];
-      if (main.distance < 1000 || (closure && i !== closureLeg)) return [];
-      const spots = closure
-        ? [{ idx: nearestOnLine([closure.lat, closure.lng], main.coords).i, km: [0.8, 1.5, 2.5, 4, 6, 9] }]
-        : [0.15, 0.3, 0.45, 0.6, 0.75, 0.9].map((f) => ({ idx: Math.floor(main.coords.length * f), km: main.distance > 15000 ? [2, 5, 9] : [1.5, 3] }));
-      return spots.flatMap((sp) => sidePoints(main.coords, sp.idx, sp.km)).map((p) => async () => {
-        const [r] = await fetchRoute([l.a, p, l.b], { alternatives: false, steps: true });
-        return { ...r, viaIdx: r.wpIdx[1], via: r.coords[r.wpIdx[1]] };
-      });
+    const res = await searchAlternatives(stops, {
+      dir, closure, fetchRoute, valhallaRoute,
+      onProgress: (done, total) => { suggestions.done = done; suggestions.total = total; requestRender(); },
     });
-    suggestions.total = tasks.flat().length;
-    const results = [];
-    for (const t of tasks) results.push((await pool(t, 6, () => { suggestions.done++; requestRender(); })).filter(Boolean));
-    const groups = mains.map(([main, ...alts], i) => ({ main, cands: [...alts, ...results[i]] }));
-    const list = pickAlternatives(groups, { closure });
-    const base = { km: mains.reduce((n, [m]) => n + m.distance, 0) / 1000, min: mains.reduce((n, [m]) => n + m.duration, 0) / 60 };
-    await Promise.all(list.map(async (x) => {
+    await Promise.all(res.list.map(async (x) => {
       x.label = await reverseGeocode(x.lat, x.lng);
       x.city = cityOf(x.label);
-      x.place = x.roads.length ? `${x.roads.join(', ')}${x.city ? ` (${x.city})` : ''}` : x.city || shortPlace(x.label);
+      x.place = x.roads.length ? x.roads.join(', ') : x.city || shortPlace(x.label);
     }));
-    suggestions = { ...suggestions, loading: false, list, base };
+    suggestions = { ...suggestions, loading: false, list: res.list, base: res.base };
   } catch (e) {
     suggestions = { ...suggestions, loading: false, list: [], error: e.message };
   }
@@ -267,9 +232,10 @@ async function loadTrafficNow(force = false) {
   const dirs = state.roundTrip !== false ? ['hin', 'rueck'] : ['hin'];
   const info = dirs.map((d) => routeInfo(d));
   const routes = Object.fromEntries(dirs.map((d) => [d, displayRoute(d)]));
-  if (info.some((i) => !i || i.loading) || dirs.some((d) => !routes[d]?.coords) || traffic.loading) return; // kommt wieder, sobald alles da ist
+  const normals = Object.fromEntries(dirs.map((d) => [d, displayRoute(d, [])])); // ohne Umleitung – auch deren Sperrungen zeigen
+  if (info.some((i) => !i || i.loading) || dirs.some((d) => !routes[d]?.coords || !normals[d]?.coords) || traffic.loading) return; // kommt wieder, sobald alles da ist
   const roads = autobahnRefs(info.flatMap((i) => i.refs || []));
-  const key = `${dirs.map((d) => routes[d].key).join('|')}|${roads.join()}`;
+  const key = `${dirs.map((d) => `${routes[d].key}/${normals[d].key}`).join('|')}|${roads.join()}`;
   if (!force && traffic.key === key && Date.now() - traffic.at < 15 * 60e3) return;
   traffic = { ...traffic, loading: true };
   requestRender();
@@ -278,7 +244,12 @@ async function loadTrafficNow(force = false) {
     const now = new Date();
     const items = (await Promise.all(roads.map((r) => roadEvents(r, { force })))).flat().filter((i) => isCurrent(i.times, now));
     const roadsBy = Object.fromEntries(dirs.map((d, k) => [d, autobahnRefs(info[k].refs || [])]));
-    traffic = { hin: alongRoute(items, routes.hin.coords), rueck: routes.rueck ? alongRoute(items, routes.rueck.coords) : [], roads, roadsBy, at: Date.now(), key, loading: false, ready: true, error: '' };
+    const along = (d) => {
+      const list = alongRoute(items, routes[d].coords);
+      for (const it of alongRoute(items, normals[d].coords)) if (isClosure(it) && !list.some((x) => x.id === it.id)) list.push(it);
+      return list;
+    };
+    traffic = { hin: along('hin'), rueck: routes.rueck ? along('rueck') : [], roads, roadsBy, at: Date.now(), key, loading: false, ready: true, error: '' };
   } catch (e) {
     traffic = { ...traffic, roads, at: Date.now(), key, loading: false, ready: true, error: e.message || 'Fehler' };
   }
@@ -296,9 +267,7 @@ function focusIncident(it) {
 /** Ausweichrouten um eine gemeldete Sperrung suchen (Mitte des Abschnitts auf unserer Route). */
 function searchAroundIncident(it) {
   map.closePopup();
-  const pts = it.shown || it.coords;
-  const [lat, lng] = pts[Math.floor(pts.length / 2)];
-  findDetours(routeDir(), { lat, lng });
+  findDetours(routeDir(), { coords: it.shown || it.coords, title: it.title });
 }
 
 /** Aus einer Sperrung heraus: Umleitung mit Grund und Enddatum vorbelegen. */
@@ -397,7 +366,7 @@ function syncMap() {
     mapKeys.traffic = ik;
   }
   const sg = suggestions && suggestions.dir === dir ? suggestions : null;
-  const gk = sg ? [dir, sg.loading, sg.list.length, sg.closure?.lat].join('|') : '';
+  const gk = sg ? [dir, sg.loading, sg.list.length, JSON.stringify(sg.closure?.coords?.[0] || sg.closure?.lat || '')].join('|') : '';
   if (gk !== mapKeys.sugg) {
     map.setSuggestions(sg?.loading ? [] : sg?.list || [], sg?.closure || null);
     if (sg && !sg.loading && sg.list.length) { map.invalidate(); setTimeout(() => map.fitLines(sg.list.map((x) => x.coords)), 80); }

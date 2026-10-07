@@ -1,9 +1,16 @@
 import { haversine } from './calc.js';
-// Externe Dienste: Photon (Adresssuche), OSRM (Routing), Tankerkönig (Spritpreise).
+// Externe Dienste: Photon (Adresssuche), OSRM (Routing), Valhalla (Umleitungen um Sperrungen), Tankerkönig (Spritpreise).
 
 const PHOTON = 'https://photon.komoot.io';
 const OSRM = 'https://router.project-osrm.org';
+const VALHALLA = 'https://valhalla1.openstreetmap.de'; // FOSSGIS – kann gesperrte Stellen meiden
 const TK = 'https://creativecommons.tankerkoenig.de/json';
+
+/** Fahrtrichtung an Wegpunkten (Umleitungen): sonst landet der Routenplaner evtl. auf der Gegenfahrbahn und muss wenden. */
+function bearingsParam(stops) {
+  if (!stops.some((s) => s.bearing != null)) return '';
+  return `bearings=${stops.map((s) => (s.bearing != null ? `${Math.round(((s.bearing % 360) + 360) % 360)},60` : '')).join(';')}&`;
+}
 
 async function getJSON(url, signal) {
   const res = await fetch(url, { signal });
@@ -49,11 +56,20 @@ function nearestIndex(coords, p, start = 0) {
   return best;
 }
 
-/** Befahrene Straßen mit Metern: { 'A 71': 30500, 'B 88': 4200 } (Nummer, sonst Name). */
+/** Befahrene Straßen mit Metern: { 'A 71': 30500, 'Hersfelder Straße': 2200 } (Nummer und Name). */
 function roadMeters(legs) {
   const out = {};
-  for (const l of legs) for (const st of l.steps || []) { const k = st.ref || st.name; if (k) out[k] = (out[k] || 0) + st.distance; }
+  for (const l of legs) {
+    for (const st of l.steps || []) for (const k of new Set([st.ref, st.name].filter(Boolean))) out[k] = (out[k] || 0) + st.distance;
+  }
   return out;
+}
+
+/** Meter auf Schleich-Abschnitten (Feld-/Waldwege u. ä., unter 20 km/h) – taugen nicht als Umleitung. */
+function slowMeters(legs) {
+  let m = 0;
+  for (const l of legs) for (const st of l.steps || []) if (st.distance > 100 && st.duration > 0 && (st.distance / st.duration) * 3.6 < 20) m += st.distance;
+  return m;
 }
 
 /**
@@ -63,7 +79,7 @@ function roadMeters(legs) {
 export async function fetchRoute(stops, { alternatives = stops.length === 2, steps = false } = {}) {
   const coords = stops.map((s) => `${s.lng.toFixed(6)},${s.lat.toFixed(6)}`).join(';');
   const alt = alternatives && stops.length === 2 ? 'true' : 'false';
-  const data = await getJSON(`${OSRM}/route/v1/driving/${coords}?overview=full&geometries=geojson&steps=${steps}&alternatives=${alt}`);
+  const data = await getJSON(`${OSRM}/route/v1/driving/${coords}?${bearingsParam(stops)}overview=full&geometries=geojson&steps=${steps}&alternatives=${alt}`);
   if (data.code !== 'Ok') throw new Error(data.message || data.code);
   const snapped = data.waypoints.map((w) => [w.location[1], w.location[0]]);
   return data.routes.slice(0, 3).map((r) => {
@@ -78,6 +94,7 @@ export async function fetchRoute(stops, { alternatives = stops.length === 2, ste
       legs: r.legs.map((l) => ({ distance: l.distance, duration: l.duration })),
       wpIdx,
       refs: steps ? roadMeters(r.legs) : undefined,
+      slow: steps ? slowMeters(r.legs) : undefined,
     };
   });
 }
@@ -88,12 +105,55 @@ export async function fetchRoute(stops, { alternatives = stops.length === 2, ste
  */
 export async function fetchRouteInfo(stops) {
   const coords = stops.map((s) => `${s.lng.toFixed(6)},${s.lat.toFixed(6)}`).join(';');
-  const data = await getJSON(`${OSRM}/route/v1/driving/${coords}?overview=false&steps=true&alternatives=false`);
+  const data = await getJSON(`${OSRM}/route/v1/driving/${coords}?${bearingsParam(stops)}overview=false&steps=true&alternatives=false`);
   if (data.code !== 'Ok') throw new Error(data.message || data.code);
   const r = data.routes[0];
   const refs = new Set();
   for (const leg of r.legs) for (const st of leg.steps || []) if (st.ref) refs.add(st.ref);
   return { distance: r.distance, duration: r.duration, refs: [...refs] };
+}
+
+/** Polyline mit 6 Nachkommastellen (Valhalla) → [[lat, lng]] */
+function decodePolyline6(str) {
+  const out = [];
+  let i = 0;
+  let lat = 0;
+  let lng = 0;
+  while (i < str.length) {
+    for (const k of [0, 1]) {
+      let b;
+      let shift = 0;
+      let r = 0;
+      do { b = str.charCodeAt(i++) - 63; r |= (b & 0x1f) << shift; shift += 5; } while (b >= 0x20);
+      const v = r & 1 ? ~(r >> 1) : r >> 1;
+      if (k === 0) lat += v; else lng += v;
+    }
+    out.push([lat / 1e6, lng / 1e6]);
+  }
+  return out;
+}
+
+/**
+ * Route mit Valhalla – kann gesperrte Stellen meiden und Alternativen liefern (nur bei 2 Punkten).
+ * avoid: { polygons: [[[lng, lat], …]], locations: [{ lat, lng }] }
+ * → [{ coords, distance (m), duration (s), refs: { Straße: Meter } }] (erste = beste)
+ */
+export async function valhallaRoute(stops, { alternates = 0, avoid = {} } = {}) {
+  const body = {
+    locations: stops.map((s) => ({ lat: s.lat, lon: s.lng, ...(s.bearing != null ? { heading: Math.round(s.bearing), heading_tolerance: 60 } : {}) })),
+    costing: 'auto', units: 'kilometers', language: 'de-DE', directions_type: 'maneuvers',
+    ...(alternates && stops.length === 2 ? { alternates } : {}),
+    ...(avoid.polygons?.length ? { exclude_polygons: avoid.polygons } : {}),
+    ...(avoid.locations?.length ? { exclude_locations: avoid.locations.map((p) => ({ lat: p.lat, lon: p.lng })) } : {}),
+  };
+  const res = await fetch(`${VALHALLA}/route`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const data = await res.json();
+  if (!data.trip) throw new Error(data.error || `Valhalla: HTTP ${res.status}`);
+  return [data.trip, ...(data.alternates || []).map((a) => a.trip)].map((t) => {
+    const refs = {};
+    for (const l of t.legs) for (const m of l.maneuvers || []) for (const n of m.street_names || []) refs[n] = (refs[n] || 0) + m.length * 1000;
+    return { coords: t.legs.flatMap((l) => decodePolyline6(l.shape)), distance: t.summary.length * 1000, duration: t.summary.time, refs };
+  });
 }
 
 /**
