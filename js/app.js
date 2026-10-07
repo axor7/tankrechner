@@ -2,7 +2,8 @@
 import { state, update, subscribe, replaceState, defaultState, model, personById, activePersons, allRoutes, liveSnap, todayIso, SHARED_KEYS } from './state.js';
 import { reverseGeocode, fetchRoute, fetchRouteInfo, optimizeOrder } from './api.js';
 import { MapView } from './map.js';
-import { FUELS, plannedStops, routeKey, mondayOf, addDays, hasOwners, insertDetours, haversine } from './calc.js';
+import { FUELS, plannedStops, routeKey, mondayOf, addDays, hasOwners, insertDetours } from './calc.js';
+import { nearestOnLine, sidePoints, pickDetours } from './detours.js';
 import { effectiveOrder, isActive, activeDetours } from './model.js';
 import { h, debounce, toast } from './ui.js';
 import { icon } from './icons.js';
@@ -189,41 +190,67 @@ function variantInfo(dir, detour = null) {
   return { km: w.distance / 1000, min: w.duration / 60, extraKm: (w.distance - base.distance) / 1000, extraMin: (w.duration - base.duration) / 60 };
 }
 
-/** Kleinster Abstand (km) eines Punkts zu einer Linie aus Punkten. */
-const distToLine = (p, line) => line.reduce((m, q) => Math.min(m, haversine(p, q)), Infinity);
+// Ausweichrouten-Suche (Admin): Ergebnis wird in der Strecken-Ansicht und auf der Karte gezeigt
+let suggestions = null; // { dir, closure, loading, done, total, list, error }
 
 /**
- * Ausweichrouten vom Routenplaner: je Teilstück der normalen Strecke bis zu zwei Alternativen.
- * Als Wegpunkt dient die Stelle der Alternative, die am weitesten von der normalen Strecke weg ist.
- * → [{ lat, lng, label, place, extraKm, extraMin }]
+ * Ausweichrouten suchen. Mit `closure` (gesperrte Stelle): Testpunkte links und rechts davon in 0,8–9 km Abstand,
+ * nur Routen, die mindestens 120 m an der Stelle vorbeiführen. Ohne: allgemeine Alternativen auf den längsten Teilstücken.
  */
-async function suggestDetours(dir) {
-  const stops = fullStops(dir, []);
-  const out = [];
-  for (let i = 1; i < stops.length; i++) {
-    const a = stops[i - 1];
-    const b = stops[i];
-    if (haversine([a.lat, a.lng], [b.lat, b.lng]) < 2) continue; // zu kurz für sinnvolle Umwege
-    const routes = await fetchRoute([a, b]);
-    if (routes.length < 2) continue;
-    const main = routes[0].coords.filter((_, k) => k % 2 === 0);
-    for (const alt of routes.slice(1)) {
+async function findDetours(dir, closure = null) {
+  if (!isAdmin()) return;
+  suggestions = { dir, closure, loading: true, done: 0, total: 0, list: [] };
+  update((s) => { s.ui.tab = 'route'; s.ui.routeSub = 'route'; s.ui.routeDir = dir; });
+  const tick = () => { suggestions.done++; requestRender(); };
+  try {
+    const stops = fullStops(dir, []);
+    if (stops.length < 2) throw new Error('Start und Ziel fehlen');
+    const [full] = await fetchRoute(stops, { alternatives: false });
+    const legs = full.legs.map((l, i) => ({
+      i, a: stops[i], b: stops[i + 1], coords: full.coords.slice(full.wpIdx[i], full.wpIdx[i + 1] + 1), distance: l.distance, duration: l.duration,
+    }));
+    let targets;
+    if (closure) {
       let best = null;
-      let bestD = 0;
-      for (let k = 0; k < alt.coords.length; k += 3) {
-        const d = distToLine(alt.coords[k], main);
-        if (d > bestD) { bestD = d; best = alt.coords[k]; }
+      for (const leg of legs) {
+        const n = nearestOnLine([closure.lat, closure.lng], leg.coords);
+        if (!best || n.d < best.d) best = { ...n, leg };
       }
-      if (best && bestD > 0.3) out.push({ lat: best[0], lng: best[1], extraKm: (alt.distance - routes[0].distance) / 1000, extraMin: (alt.duration - routes[0].duration) / 60 });
+      if (best.d > 500) throw new Error('die markierte Stelle liegt nicht auf eurer Strecke');
+      targets = [{ leg: best.leg, idx: best.i, km: [0.8, 1.5, 2.5, 4, 6, 9] }];
+    } else {
+      targets = legs.filter((l) => l.distance > 3000).sort((x, y) => y.distance - x.distance).slice(0, 3)
+        .map((leg) => ({ leg, idx: Math.floor(leg.coords.length / 2), km: [1.5, 3.5] }));
+      if (!targets.length) throw new Error('die Teilstücke sind zu kurz für Umwege');
     }
+    suggestions.total = targets.reduce((n, t) => n + 1 + t.km.length * 2, 0);
+    const found = [];
+    for (const t of targets) {
+      const cands = [];
+      try { cands.push(...(await fetchRoute([t.leg.a, t.leg.b], { alternatives: true })).slice(1)); } catch { /* keine */ }
+      tick();
+      for (const p of sidePoints(t.leg.coords, t.idx, t.km)) {
+        try {
+          const [r] = await fetchRoute([t.leg.a, p, t.leg.b], { alternatives: false });
+          cands.push({ ...r, viaIdx: r.wpIdx[1], via: r.coords[r.wpIdx[1]] });
+        } catch { /* Punkt nicht erreichbar */ }
+        tick();
+      }
+      found.push(...pickDetours(t.leg, cands, { closure }));
+    }
+    const list = found.sort((x, y) => x.extraMin - y.extraMin).slice(0, 5);
+    for (const x of list) {
+      x.label = await reverseGeocode(x.lat, x.lng);
+      x.place = shortPlace(x.label);
+    }
+    suggestions = { ...suggestions, loading: false, list };
+  } catch (e) {
+    suggestions = { ...suggestions, loading: false, list: [], error: e.message };
   }
-  const list = out.sort((x, y) => x.extraKm - y.extraKm).slice(0, 4);
-  for (const s of list) {
-    s.label = await reverseGeocode(s.lat, s.lng);
-    s.place = shortPlace(s.label);
-  }
-  return list;
+  requestRender();
 }
+
+function clearSuggestions() { suggestions = null; requestRender(); }
 
 // Sperrungen & Baustellen auf der Strecke (je Richtung)
 let traffic = { hin: [], rueck: [], roads: [], at: 0, key: '', loading: false, ready: false, error: '' };
@@ -256,6 +283,14 @@ function focusIncident(it) {
   if (window.innerWidth < 900) window.scrollTo({ top: 0, behavior: 'smooth' });
   map.invalidate();
   setTimeout(() => map.focusIncident(it), 120);
+}
+
+/** Ausweichrouten um eine gemeldete Sperrung suchen (Mitte des Abschnitts auf unserer Route). */
+function searchAroundIncident(it) {
+  map.closePopup();
+  const pts = it.shown || it.coords;
+  const [lat, lng] = pts[Math.floor(pts.length / 2)];
+  findDetours(routeDir(), { lat, lng });
 }
 
 /** Aus einer Sperrung heraus: Umleitung mit Grund und Enddatum vorbelegen. */
@@ -305,9 +340,10 @@ const ensureRoutes = debounce(async () => {
 
 const mapHandlers = {
   menuItems: () => (isAdmin()
-    ? [['start', 'Start (Fahrer)'], ['end', 'Ziel'], ['detour', 'Umleitung über diesen Punkt']]
+    ? [['closure', 'Sperrung hier – Umleitung suchen'], ['detour', 'Umleitung über diesen Punkt'], ['start', 'Start (Fahrer)'], ['end', 'Ziel']]
     : me() ? [['me', 'Meine Abholadresse']] : []),
   async onAddPoint(kind, latlng) {
+    if (kind === 'closure') { findDetours(routeDir(), { lat: latlng.lat, lng: latlng.lng }); return; }
     const label = await reverseGeocode(latlng.lat, latlng.lng);
     const addr = { label, lat: latlng.lat, lng: latlng.lng };
     if (kind === 'detour') openDetourForm({ lat: addr.lat, lng: addr.lng, label, place: shortPlace(label) });
@@ -349,8 +385,15 @@ function syncMap() {
   }
   const ik = [dir, traffic.key, traffic.at, isAdmin()].join('|');
   if (ik !== mapKeys.traffic) {
-    map.setIncidents(traffic[dir] || [], { popup: (it) => incidentPopup(it, { onDetour: isAdmin() ? detourFromIncident : null }) });
+    map.setIncidents(traffic[dir] || [], { popup: (it) => incidentPopup(it, { onDetour: isAdmin() ? detourFromIncident : null, onSearch: isAdmin() ? searchAroundIncident : null }) });
     mapKeys.traffic = ik;
+  }
+  const sg = suggestions && suggestions.dir === dir ? suggestions : null;
+  const gk = sg ? [dir, sg.loading, sg.list.length, sg.closure?.lat].join('|') : '';
+  if (gk !== mapKeys.sugg) {
+    map.setSuggestions(sg?.loading ? [] : sg?.list || [], sg?.closure || null);
+    if (sg && !sg.loading && sg.list.length) map.fitLines(sg.list.map((x) => x.coords));
+    mapKeys.sugg = gk;
   }
   const back = state.roundTrip !== false && stops.length >= 2;
   const dk = `${back}|${dir}`;
@@ -426,7 +469,7 @@ function releasePointer() {
 
 const ctx = () => ({
   map, go, toggleMap, data: dataActions, openAccount, setDestination, adminSet: (fn, text) => safe(() => adminSet(fn, text)),
-  refreshRoute, routeDir, setRouteDir, displayRoute, routeInfo, variantInfo, suggestDetours, traffic: () => traffic, loadTraffic, focusIncident,
+  refreshRoute, routeDir, setRouteDir, displayRoute, routeInfo, variantInfo, findDetours, clearSuggestions, suggestions: () => suggestions, traffic: () => traffic, loadTraffic, focusIncident,
 });
 
 function render() {

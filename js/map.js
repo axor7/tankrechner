@@ -43,6 +43,7 @@ export class MapView {
     this.routeLayer = L.layerGroup().addTo(this.map);
     this.stationLayer = L.layerGroup().addTo(this.map);
     this.incidentLayer = L.layerGroup().addTo(this.map);
+    this.suggestLayer = L.layerGroup().addTo(this.map);
     this.incidentMarkers = new Map();
     this.map.on('click', (e) => this.showAddMenu(e.latlng));
     this.fitted = false;
@@ -114,6 +115,31 @@ export class MapView {
       m.addTo(this.incidentLayer);
       this.incidentMarkers.set(it.id, m);
     }
+  }
+
+  /** Vorschläge für Ausweichrouten: gestrichelt und nummeriert; closure = markierte Sperrung. */
+  setSuggestions(list, closure) {
+    this.suggestLayer.clearLayers();
+    const colors = ['#7c3aed', '#0891b2', '#db2777', '#65a30d', '#ca8a04'];
+    list.forEach((x, k) => {
+      const color = colors[k % colors.length];
+      L.polyline(x.coords, { color: '#fff', weight: 8, opacity: 0.8, interactive: false }).addTo(this.suggestLayer);
+      L.polyline(x.coords, { color, weight: 5, opacity: 0.95, dashArray: '10 8' })
+        .bindTooltip(`Vorschlag ${k + 1}: über ${x.place || ''}`, { sticky: true }).addTo(this.suggestLayer);
+      L.marker([x.lat, x.lng], {
+        icon: L.divIcon({ className: '', html: `<div class="sugg-pin" style="background:${color}">${k + 1}</div>`, iconSize: [24, 24], iconAnchor: [12, 12] }),
+        zIndexOffset: 1100,
+      }).bindTooltip(`Vorschlag ${k + 1}: über ${x.place || ''}`).addTo(this.suggestLayer);
+    });
+    if (closure) {
+      L.marker([closure.lat, closure.lng], { icon: badgeIcon('octagon-x', 'incident closure', 30), zIndexOffset: 1200 })
+        .bindTooltip('Gesperrte Stelle').addTo(this.suggestLayer);
+    }
+  }
+
+  fitLines(lines) {
+    const pts = lines.flat();
+    if (pts.length) this.map.fitBounds(L.latLngBounds(pts).pad(0.15));
   }
 
   focusIncident(it) {

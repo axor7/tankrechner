@@ -53,9 +53,9 @@ function nearestIndex(coords, p, start = 0) {
  * Route über alle Stopps. Liefert bis zu 3 Alternativen (nur bei 2 Stopps).
  * Ergebnis: [{distance (m), duration (s), coords: [[lat,lng]], legs: [{distance, duration}], wpIdx: []}]
  */
-export async function fetchRoute(stops) {
+export async function fetchRoute(stops, { alternatives = stops.length === 2 } = {}) {
   const coords = stops.map((s) => `${s.lng.toFixed(6)},${s.lat.toFixed(6)}`).join(';');
-  const alt = stops.length === 2 ? 'true' : 'false';
+  const alt = alternatives && stops.length === 2 ? 'true' : 'false';
   const data = await getJSON(`${OSRM}/route/v1/driving/${coords}?overview=full&geometries=geojson&steps=false&alternatives=${alt}`);
   if (data.code !== 'Ok') throw new Error(data.message || data.code);
   const snapped = data.waypoints.map((w) => [w.location[1], w.location[0]]);

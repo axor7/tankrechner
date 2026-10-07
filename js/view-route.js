@@ -121,7 +121,7 @@ function trafficCard(c) {
 }
 
 /** Inhalt des Karten-Popups einer Sperrung/Baustelle. */
-export function incidentPopup(it, { onDetour } = {}) {
+export function incidentPopup(it, { onDetour, onSearch } = {}) {
   const now = new Date();
   const cls = incidentCls(it);
   const st = timeStatus(it.times, now);
@@ -134,7 +134,8 @@ export function incidentPopup(it, { onDetour } = {}) {
     overall ? h('div', { class: 'small muted' }, `Gesamte Maßnahme bis ${fmtWhen(overall, now, { time: false })}`) : null,
     it.lines.length ? h('details', {}, h('summary', {}, 'Details'),
       h('ul', { class: 'incident-lines' }, it.lines.slice(0, 14).map((l) => h('li', {}, l.length > 220 ? `${l.slice(0, 220)} …` : l)))) : null,
-    onDetour ? h('button', { type: 'button', class: 'btn btn-small', onclick: () => onDetour(it) }, icon('signpost', { size: 15 }), 'Umleitung eintragen') : null,
+    onSearch ? h('button', { type: 'button', class: 'btn btn-small btn-primary', onclick: () => onSearch(it) }, icon('sparkles', { size: 15 }), 'Umleitungen suchen') : null,
+    onDetour ? h('button', { type: 'button', class: 'btn btn-small', onclick: () => onDetour(it) }, icon('signpost', { size: 15 }), 'Umleitung selbst eintragen') : null,
     h('div', { class: 'tiny muted' }, `Quelle: ${SOURCE}`));
 }
 
@@ -194,7 +195,6 @@ function detourForm(c) {
       h('button', { type: 'button', class: 'btn', onclick: () => { draft = null; update(() => {}); } }, 'Abbrechen')));
 }
 
-let suggest = null; // { dir, loading, list, error }
 
 const fmtMin = (m) => `${Math.round(m)} min`;
 const fmtPlus = (v, fmt) => (Math.abs(v) < 0.05 ? '±0' : `${v > 0 ? '+' : '−'}${fmt(Math.abs(v))}`);
@@ -253,7 +253,8 @@ function detoursCard(c) {
   if (!admin && !live.length) return null;
   const dirs = state.roundTrip !== false ? ['hin', 'rueck'] : ['hin'];
   const sections = dirs.map((dir) => [dir, live.filter((d) => d.dir === dir || d.dir === 'both')]).filter(([dir, list]) => list.length || dir === c.routeDir());
-  const sug = suggest && suggest.dir === c.routeDir() ? suggest : null;
+  const sg = c.suggestions();
+  const sug = sg && sg.dir === c.routeDir() ? sg : null;
   return h('section', { class: 'card', id: 'detours' },
     h('h2', {}, 'Umleitungen'),
     admin ? h('p', { class: 'hint small' }, 'Tragt mögliche Umwege ein oder lasst euch Ausweichrouten vorschlagen – je Variante seht ihr Kilometer und Fahrzeit. Antippen wählt aus, welche ihr fahrt; ab dann rechnet die App damit. Bisherige Fahrten bleiben, wie sie waren.') : null,
@@ -261,39 +262,47 @@ function detoursCard(c) {
       h('h3', { class: 'incident-h' }, DIR_TEXT[dir]),
       list.length || admin ? variantList(dir, list, c, admin, today) : null,
     ]),
-    admin && sug ? h('div', { class: 'suggest-box' },
-      h('h3', { class: 'incident-h' }, `Vorschläge für die ${DIR_TEXT[sug.dir]}`),
-      sug.loading ? h('p', { class: 'hint' }, 'Ausweichrouten werden gesucht …')
-        : sug.error ? h('p', { class: 'callout' }, `Keine Vorschläge möglich (${sug.error}).`)
-          : !sug.list.length ? h('p', { class: 'hint' }, 'Der Routenplaner kennt keine sinnvollen Ausweichrouten. Tippt die Umleitung selbst auf der Karte an.')
-            : h('div', { class: 'list' }, sug.list.map((x) => h('div', { class: 'list-row variant-row' },
-              h('span', { class: 'incident-sq detour' }, icon('signpost', { size: 15 })),
-              h('span', { class: 'grow' },
-                h('span', { class: 'title' }, `über ${x.place}`),
-                h('span', { class: 'variant-extra' }, `${fmtPlus(x.extraKm, fmtKm)} · ${fmtPlus(x.extraMin, fmtMin)}`)),
-              h('button', {
-                type: 'button', class: 'btn btn-small',
-                onclick: () => safe(() => {
-                  addDetour({ dir: sug.dir, lat: x.lat, lng: x.lng, label: x.label, place: x.place, note: 'Vorschlag Routenplaner', use: false });
-                  sug.list = sug.list.filter((y) => y !== x);
-                  if (!sug.list.length) suggest = null; // alle übernommen
-                  toast('Als Variante übernommen – antippen, um sie zu fahren', 'ok');
-                }),
-              }, 'Übernehmen')))),
-      h('p', { class: 'hint small' }, 'Der Routenplaner kennt keine Sperrungen – prüft, ob der Vorschlag die gesperrte Stelle wirklich umfährt.')) : null,
-    admin ? (draft ? detourForm(c) : h('div', { class: 'row gap wrap' },
-      h('button', { type: 'button', class: 'btn btn-small', onclick: () => openDetourForm({}) }, icon('signpost', { size: 15 }), 'Umleitung eintragen'),
-      h('button', {
-        type: 'button', class: 'btn btn-small', disabled: !!sug?.loading,
-        onclick: async () => {
-          const dir = c.routeDir();
-          suggest = { dir, loading: true, list: [] };
-          update(() => {});
-          try { suggest = { dir, loading: false, list: await c.suggestDetours(dir) }; } catch (e) { suggest = { dir, loading: false, list: [], error: e.message }; }
-          update(() => {});
-        },
-      }, icon('sparkles', { size: 15 }), `Ausweichrouten vorschlagen (${DIR_TEXT[c.routeDir()]})`))) : null,
+    admin && sug ? suggestBox(sug, c) : null,
+    admin ? (draft ? detourForm(c) : [
+      h('p', { class: 'hint small' }, h('strong', {}, 'Ausweichroute suchen: '), 'auf der Karte auf die gesperrte Stelle tippen → „Sperrung hier – Umleitung suchen“. Dann werden nur Wege gezeigt, die an der Stelle vorbeiführen.'),
+      h('div', { class: 'row gap wrap' },
+        h('button', { type: 'button', class: 'btn btn-small', onclick: () => openDetourForm({}) }, icon('signpost', { size: 15 }), 'Umleitung selbst eintragen'),
+        h('button', { type: 'button', class: 'btn btn-small', disabled: !!sug?.loading, onclick: () => c.findDetours(c.routeDir(), null) },
+          icon('sparkles', { size: 15 }), `Allgemeine Alternativen (${DIR_TEXT[c.routeDir()]})`)),
+    ]) : null,
   );
+}
+
+/** Ergebnis der Ausweichrouten-Suche – Nummern wie auf der Karte. */
+function suggestBox(sug, c) {
+  const colors = ['#7c3aed', '#0891b2', '#db2777', '#65a30d', '#ca8a04'];
+  return h('div', { class: 'suggest-box' },
+    h('div', { class: 'row between' },
+      h('h3', { class: 'incident-h' }, sug.closure ? `Umfahrungen der Sperrung · ${DIR_TEXT[sug.dir]}` : `Alternativen · ${DIR_TEXT[sug.dir]}`),
+      sug.loading ? null : h('button', { type: 'button', class: 'link small', onclick: () => c.clearSuggestions() }, 'Ausblenden')),
+    sug.loading ? h('p', { class: 'hint' }, `Ausweichrouten werden gesucht … ${sug.total ? `(${sug.done} von ${sug.total})` : ''}`)
+      : sug.error ? h('p', { class: 'callout' }, `Keine Vorschläge möglich: ${sug.error}.`)
+        : !sug.list.length ? h('p', { class: 'callout' }, sug.closure
+          ? 'Keine Umfahrung gefunden. Tippt die gesperrte Stelle genauer an (direkt auf eurer Route) oder tragt die Umleitung selbst ein.'
+          : 'Keine sinnvollen Alternativen gefunden. Markiert am besten die gesperrte Stelle auf der Karte.')
+          : h('div', { class: 'list' }, sug.list.map((x, k) => h('div', { class: 'list-row variant-row pickable', onclick: () => c.map.fitLines([x.coords]) },
+            h('span', { class: 'sugg-pin', style: { background: colors[k % colors.length] } }, String(k + 1)),
+            h('span', { class: 'grow' },
+              h('span', { class: 'title' }, `über ${x.place}`),
+              h('span', { class: 'variant-extra' }, `${fmtPlus(x.extraKm, fmtKm)} · ${fmtPlus(x.extraMin, fmtMin)}`)),
+            h('button', {
+              type: 'button', class: 'btn btn-small',
+              onclick: (e) => {
+                e.stopPropagation();
+                safe(() => {
+                  addDetour({ dir: sug.dir, lat: x.lat, lng: x.lng, label: x.label, place: x.place, note: sug.closure ? 'Umfahrung der Sperrung' : 'Alternative', use: false });
+                  sug.list = sug.list.filter((y) => y !== x);
+                  if (!sug.list.length) c.clearSuggestions(); // alle übernommen
+                  toast('Als Variante übernommen – oben antippen, um sie zu fahren', 'ok');
+                });
+              },
+            }, 'Übernehmen')))),
+    sug.loading || !sug.list.length ? null : h('p', { class: 'hint small' }, 'Die Linien auf der Karte zeigen die Vorschläge. Mehr-km und Mehr-Zeit gelten gegenüber der normalen Strecke ohne Sperrung.'));
 }
 
 // ---------- Admin: Ziel, Start, Reihenfolge ----------
