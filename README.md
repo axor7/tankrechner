@@ -11,7 +11,7 @@ Handy: Tab-Leiste unten · Tablet/Computer: Seitenleiste · Karte ein-/ausblendb
 
 **Admin** (wer die Fahrgemeinschaft erstellt; Admin-Rechte lassen sich teilen) – volle Kontrolle:
 - Ziel und Startadresse, **automatisch beste Abholreihenfolge** (Routenplaner), von Hand änderbar; Rückfahrt-Reihenfolge
-- **Umleitungen** eintragen (z. B. wegen einer Sperrung): Richtung, „über“ (Adresse oder auf der Karte tippen), Grund, gilt ab/bis – oder **Ausweichrouten suchen** lassen: gesperrte Stelle auf der Karte antippen („Sperrung hier – Umleitung suchen“) oder im Popup einer Autobahn-Sperrung – die App testet Wege links und rechts der Stelle und zeigt nur die, die wirklich daran vorbeiführen (nummeriert auf der Karte). Alle Varianten stehen mit Kilometern, Fahrzeit und Mehr-km/Mehr-Minuten nebeneinander; antippen wählt, welche gefahren wird (ab heute, die App rechnet dann damit)
+- **Umleitungen** eintragen (z. B. wegen einer Sperrung): Richtung, „über“ (Adresse oder auf der Karte tippen), Grund, gilt ab/bis – oder einfach **„Andere Routen anzeigen“**: wie bei Google/Apple Karten bis zu 5 Alternativen (z. B. „über A 4“) mit Kilometern, Fahrzeit und Mehr-km/Mehr-Minuten, nummeriert auf der Karte. Antippen = diese Route fahren (ab heute rechnet die App damit). Wer weiß, wo gesperrt ist, tippt auf der Karte darauf → nur Routen, die daran vorbeiführen.
 - Auto, Spritpreis (live an der Strecke), Aufteilungsregel, Mitfahrer (auch ohne App); Entfernen wirkt erst ab heute, vergangene Fahrten bleiben in der Abrechnung
 - Jeden Tag bearbeiten: wer fährt, anderer Fahrer, freier Tag
 - **Ganze Woche auf einmal:** im Kalender auf die KW tippen → je Person „Regelplan / Ganze Woche / Gar nicht“
@@ -109,7 +109,7 @@ js/sync.js          Synchronisation mit Konfliktbehandlung (getestet)
 js/account.js       Konto, Fahrgemeinschaft, Rollen, Profile
 js/cloud.js         Supabase-Anbindung
 js/pay.js           PayPal.me-Links und Nachrichten (getestet)
-js/detours.js       Ausweichrouten um eine gesperrte Stelle finden (getestet)
+js/detours.js       Alternativrouten auswählen: echter anderer Weg, verschieden, an Sperrungen vorbei (getestet)
 js/traffic.js       Sperrungen & Baustellen (Autobahn GmbH): Zeiten auslesen, der Strecke und Fahrtrichtung zuordnen (getestet)
 js/tab-fuel.js      Auto, Spritpreis, Tankstellen, beste Tankzeit
 js/address.js       Adresssuche

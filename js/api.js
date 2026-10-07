@@ -49,14 +49,21 @@ function nearestIndex(coords, p, start = 0) {
   return best;
 }
 
+/** Befahrene Straßen mit Metern: { 'A 71': 30500, 'B 88': 4200 } (Nummer, sonst Name). */
+function roadMeters(legs) {
+  const out = {};
+  for (const l of legs) for (const st of l.steps || []) { const k = st.ref || st.name; if (k) out[k] = (out[k] || 0) + st.distance; }
+  return out;
+}
+
 /**
  * Route über alle Stopps. Liefert bis zu 3 Alternativen (nur bei 2 Stopps).
  * Ergebnis: [{distance (m), duration (s), coords: [[lat,lng]], legs: [{distance, duration}], wpIdx: []}]
  */
-export async function fetchRoute(stops, { alternatives = stops.length === 2 } = {}) {
+export async function fetchRoute(stops, { alternatives = stops.length === 2, steps = false } = {}) {
   const coords = stops.map((s) => `${s.lng.toFixed(6)},${s.lat.toFixed(6)}`).join(';');
   const alt = alternatives && stops.length === 2 ? 'true' : 'false';
-  const data = await getJSON(`${OSRM}/route/v1/driving/${coords}?overview=full&geometries=geojson&steps=false&alternatives=${alt}`);
+  const data = await getJSON(`${OSRM}/route/v1/driving/${coords}?overview=full&geometries=geojson&steps=${steps}&alternatives=${alt}`);
   if (data.code !== 'Ok') throw new Error(data.message || data.code);
   const snapped = data.waypoints.map((w) => [w.location[1], w.location[0]]);
   return data.routes.slice(0, 3).map((r) => {
@@ -70,6 +77,7 @@ export async function fetchRoute(stops, { alternatives = stops.length === 2 } = 
       coords: line,
       legs: r.legs.map((l) => ({ distance: l.distance, duration: l.duration })),
       wpIdx,
+      refs: steps ? roadMeters(r.legs) : undefined,
     };
   });
 }

@@ -93,35 +93,59 @@ export function overlap(a, b, tol = 60) {
   return n ? hit / n : 0;
 }
 
-/**
- * Aus berechneten Kandidaten die brauchbaren Ausweichrouten auswählen.
- * main: { coords, distance, duration } der normalen Strecke (dieses Teilstücks)
- * candidates: [{ coords, distance, duration }]
- * closure: { lat, lng } – gesperrte Stelle (optional): Vorschläge müssen mindestens `clearance` Meter daran vorbei
- * → [{ coords, lat, lng, extraKm, extraMin }] nach Mehr-Fahrzeit sortiert, ähnliche zusammengefasst
- */
-export function pickDetours(main, candidates, { closure = null, clearance = 120, max = 5 } = {}) {
-  const maxExtraKm = Math.max(15, (main.distance / 1000) * 0.6);
-  const ok = [];
-  for (const c of candidates) {
-    if (!c?.coords?.length) continue;
-    if (hasSpur(c.coords, c.viaIdx)) continue;
-    const extraKm = (c.distance - main.distance) / 1000;
-    const extraMin = (c.duration - main.duration) / 60;
-    if (extraKm > maxExtraKm) continue;
-    if (closure && nearestOnLine([closure.lat, closure.lng], c.coords).d < clearance) continue; // fährt durch die Sperrung
-    if (overlap(c.coords, main.coords) > 0.97) continue; // praktisch die normale Strecke
-    const far = farthestPoint(c.coords, main.coords);
-    if (!far.point || far.dist < 150) continue;
-    const via = c.via || far.point; // Wegpunkt auf der Ausweichstraße
-    ok.push({ coords: c.coords, lat: via[0], lng: via[1], extraKm, extraMin });
+/** Teil einer Route, der nicht auf der anderen liegt: Länge (m) und Punkte. */
+export function divergence(route, other, tol = 100) {
+  let len = 0;
+  const pts = [];
+  const step = Math.max(1, Math.floor(route.length / 200));
+  for (let k = step; k < route.length; k += step) {
+    if (nearestOnLine(route[k], other).d > tol) {
+      len += nearestOnLine(route[k], [route[k - step]]).d;
+      pts.push(route[k]);
+    }
   }
+  return { len, pts };
+}
+
+/** Straßen, die die Alternative fährt, die normale Strecke aber (kaum): { name: Meter } → ['B 7', 'L 1044'] */
+export function newRoads(refs = {}, mainRefs = {}) {
+  return Object.entries(refs)
+    .filter(([k, m]) => m > 800 && (mainRefs[k] || 0) < m * 0.3)
+    .sort((a, b) => b[1] - a[1])
+    .map(([k]) => k);
+}
+
+const nearShare = (pts, line, tol = 150) => (pts.length ? pts.filter((p) => nearestOnLine(p, line).d < tol).length / pts.length : 1);
+
+/**
+ * Alternativrouten wie bei Google/Apple Karten: aus berechneten Kandidaten die schnellsten, die auf
+ * mehreren Kilometern einen anderen Weg nehmen und sich untereinander unterscheiden.
+ * groups: je Teilstück { main: { coords, distance, duration, refs }, cands: [{ coords, distance, duration, refs, via?, viaIdx? }] }
+ * closure: { lat, lng } (optional) – nur Routen, die mindestens `clearance` m daran vorbeiführen
+ * → [{ leg, coords, lat, lng, extraKm, extraMin, roads }] nach Mehr-Fahrzeit sortiert
+ */
+export function pickAlternatives(groups, { closure = null, clearance = 120, max = 5 } = {}) {
+  const ok = [];
+  groups.forEach(({ main, cands }, leg) => {
+    const legKm = main.distance / 1000;
+    const minDiv = Math.max(1500, Math.min(4000, main.distance * 0.15)); // wirklich ein anderer Weg, kein Schlenker
+    for (const c of cands) {
+      if (!c?.coords?.length || hasSpur(c.coords, c.viaIdx)) continue;
+      const extraKm = (c.distance - main.distance) / 1000;
+      if (extraKm > Math.max(15, legKm * 0.6)) continue;
+      if (closure && nearestOnLine([closure.lat, closure.lng], c.coords).d < clearance) continue;
+      const d = divergence(c.coords, main.coords);
+      if (d.len < minDiv) continue;
+      const via = c.via || farthestPoint(c.coords, main.coords).point;
+      ok.push({ leg, coords: c.coords, pts: d.pts, lat: via[0], lng: via[1], extraKm, extraMin: (c.duration - main.duration) / 60, roads: newRoads(c.refs, main.refs).slice(0, 2) });
+    }
+  });
   ok.sort((x, y) => x.extraMin - y.extraMin || x.extraKm - y.extraKm);
   const out = [];
-  for (const c of ok) {
-    if (out.some((o) => overlap(c.coords, o.coords) > 0.85 && overlap(o.coords, c.coords) > 0.85)) continue; // gleiche Route
-    out.push(c);
+  for (const x of ok) {
+    if (out.some((p) => p.leg === x.leg && (nearShare(x.pts, p.coords) > 0.6 || nearShare(p.pts, x.coords) > 0.6))) continue; // gleicher Umweg
+    out.push(x);
     if (out.length >= max) break;
   }
-  return out;
+  return out.map(({ pts, ...x }) => x);
 }

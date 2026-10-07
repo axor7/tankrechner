@@ -3,7 +3,7 @@ import { state, update, subscribe, replaceState, defaultState, model, personById
 import { reverseGeocode, fetchRoute, fetchRouteInfo, optimizeOrder } from './api.js';
 import { MapView } from './map.js';
 import { FUELS, plannedStops, routeKey, mondayOf, addDays, hasOwners, insertDetours } from './calc.js';
-import { nearestOnLine, sidePoints, pickDetours } from './detours.js';
+import { nearestOnLine, sidePoints, pickAlternatives } from './detours.js';
 import { effectiveOrder, isActive, activeDetours } from './model.js';
 import { h, debounce, toast } from './ui.js';
 import { icon } from './icons.js';
@@ -190,60 +190,68 @@ function variantInfo(dir, detour = null) {
   return { km: w.distance / 1000, min: w.duration / 60, extraKm: (w.distance - base.distance) / 1000, extraMin: (w.duration - base.duration) / 60 };
 }
 
-// Ausweichrouten-Suche (Admin): Ergebnis wird in der Strecken-Ansicht und auf der Karte gezeigt
-let suggestions = null; // { dir, closure, loading, done, total, list, error }
+// Andere Routen (Admin): wie bei Google/Apple Karten – Ergebnis in der Strecken-Ansicht und auf der Karte
+let suggestions = null; // { dir, closure, loading, done, total, list, base, error }
+
+/** Aufgaben mit höchstens n gleichzeitigen Anfragen ausführen (fehlgeschlagene → null). */
+async function pool(tasks, n, onDone) {
+  const out = [];
+  let next = 0;
+  await Promise.all(Array.from({ length: n }, async () => {
+    while (next < tasks.length) {
+      const k = next++;
+      try { out[k] = await tasks[k](); } catch { out[k] = null; }
+      onDone?.();
+    }
+  }));
+  return out;
+}
+
+const cityOf = (label = '') => (String(label).split(',').map((x) => x.trim()).filter(Boolean).pop() || '').replace(/^\d{4,5}\s*/, '');
 
 /**
- * Ausweichrouten suchen. Mit `closure` (gesperrte Stelle): Testpunkte links und rechts davon in 0,8–9 km Abstand,
- * nur Routen, die mindestens 120 m an der Stelle vorbeiführen. Ohne: allgemeine Alternativen auf den längsten Teilstücken.
+ * Andere Routen suchen: je Teilstück die Alternativen des Routenplaners plus Testpunkte links und rechts entlang der Strecke;
+ * übrig bleiben die schnellsten, die auf mehreren Kilometern einen anderen Weg nehmen.
+ * closure (optional): markierte Sperrung – dann nur Routen, die daran vorbeiführen.
  */
 async function findDetours(dir, closure = null) {
   if (!isAdmin()) return;
   suggestions = { dir, closure, loading: true, done: 0, total: 0, list: [] };
   update((s) => { s.ui.tab = 'route'; s.ui.routeSub = 'route'; s.ui.routeDir = dir; });
-  const tick = () => { suggestions.done++; requestRender(); };
   try {
     const stops = fullStops(dir, []);
     if (stops.length < 2) throw new Error('Start und Ziel fehlen');
-    const [full] = await fetchRoute(stops, { alternatives: false });
-    const legs = full.legs.map((l, i) => ({
-      i, a: stops[i], b: stops[i + 1], coords: full.coords.slice(full.wpIdx[i], full.wpIdx[i + 1] + 1), distance: l.distance, duration: l.duration,
-    }));
-    let targets;
+    const legs = stops.slice(1).map((b, i) => ({ a: stops[i], b }));
+    const mains = await Promise.all(legs.map((l) => fetchRoute([l.a, l.b], { alternatives: true, steps: true })));
+    let closureLeg = -1;
     if (closure) {
-      let best = null;
-      for (const leg of legs) {
-        const n = nearestOnLine([closure.lat, closure.lng], leg.coords);
-        if (!best || n.d < best.d) best = { ...n, leg };
-      }
-      if (best.d > 500) throw new Error('die markierte Stelle liegt nicht auf eurer Strecke');
-      targets = [{ leg: best.leg, idx: best.i, km: [0.8, 1.5, 2.5, 4, 6, 9] }];
-    } else {
-      targets = legs.filter((l) => l.distance > 3000).sort((x, y) => y.distance - x.distance).slice(0, 3)
-        .map((leg) => ({ leg, idx: Math.floor(leg.coords.length / 2), km: [1.5, 3.5] }));
-      if (!targets.length) throw new Error('die Teilstücke sind zu kurz für Umwege');
+      let best = Infinity;
+      mains.forEach(([m], i) => { const d = nearestOnLine([closure.lat, closure.lng], m.coords).d; if (d < best) { best = d; closureLeg = i; } });
+      if (best > 500) throw new Error('die markierte Stelle liegt nicht auf eurer Strecke');
     }
-    suggestions.total = targets.reduce((n, t) => n + 1 + t.km.length * 2, 0);
-    const found = [];
-    for (const t of targets) {
-      const cands = [];
-      try { cands.push(...(await fetchRoute([t.leg.a, t.leg.b], { alternatives: true })).slice(1)); } catch { /* keine */ }
-      tick();
-      for (const p of sidePoints(t.leg.coords, t.idx, t.km)) {
-        try {
-          const [r] = await fetchRoute([t.leg.a, p, t.leg.b], { alternatives: false });
-          cands.push({ ...r, viaIdx: r.wpIdx[1], via: r.coords[r.wpIdx[1]] });
-        } catch { /* Punkt nicht erreichbar */ }
-        tick();
-      }
-      found.push(...pickDetours(t.leg, cands, { closure }));
-    }
-    const list = found.sort((x, y) => x.extraMin - y.extraMin).slice(0, 5);
-    for (const x of list) {
+    const tasks = legs.map((l, i) => {
+      const main = mains[i][0];
+      if (main.distance < 1000 || (closure && i !== closureLeg)) return [];
+      const spots = closure
+        ? [{ idx: nearestOnLine([closure.lat, closure.lng], main.coords).i, km: [0.8, 1.5, 2.5, 4, 6, 9] }]
+        : [0.15, 0.3, 0.45, 0.6, 0.75, 0.9].map((f) => ({ idx: Math.floor(main.coords.length * f), km: main.distance > 15000 ? [2, 5, 9] : [1.5, 3] }));
+      return spots.flatMap((sp) => sidePoints(main.coords, sp.idx, sp.km)).map((p) => async () => {
+        const [r] = await fetchRoute([l.a, p, l.b], { alternatives: false, steps: true });
+        return { ...r, viaIdx: r.wpIdx[1], via: r.coords[r.wpIdx[1]] };
+      });
+    });
+    suggestions.total = tasks.flat().length;
+    const results = [];
+    for (const t of tasks) results.push((await pool(t, 6, () => { suggestions.done++; requestRender(); })).filter(Boolean));
+    const groups = mains.map(([main, ...alts], i) => ({ main, cands: [...alts, ...results[i]] }));
+    const list = pickAlternatives(groups, { closure });
+    const base = { km: mains.reduce((n, [m]) => n + m.distance, 0) / 1000, min: mains.reduce((n, [m]) => n + m.duration, 0) / 60 };
+    await Promise.all(list.map(async (x) => {
       x.label = await reverseGeocode(x.lat, x.lng);
-      x.place = shortPlace(x.label);
-    }
-    suggestions = { ...suggestions, loading: false, list };
+      x.city = cityOf(x.label);
+      x.place = x.roads.length ? `${x.roads.join(', ')}${x.city ? ` (${x.city})` : ''}` : x.city || shortPlace(x.label);
+    }));
+    suggestions = { ...suggestions, loading: false, list, base };
   } catch (e) {
     suggestions = { ...suggestions, loading: false, list: [], error: e.message };
   }
@@ -340,7 +348,7 @@ const ensureRoutes = debounce(async () => {
 
 const mapHandlers = {
   menuItems: () => (isAdmin()
-    ? [['closure', 'Sperrung hier – Umleitung suchen'], ['detour', 'Umleitung über diesen Punkt'], ['start', 'Start (Fahrer)'], ['end', 'Ziel']]
+    ? [['closure', 'Hier ist gesperrt – Routen drumherum'], ['detour', 'Umleitung über diesen Punkt'], ['start', 'Start (Fahrer)'], ['end', 'Ziel']]
     : me() ? [['me', 'Meine Abholadresse']] : []),
   async onAddPoint(kind, latlng) {
     if (kind === 'closure') { findDetours(routeDir(), { lat: latlng.lat, lng: latlng.lng }); return; }
@@ -392,7 +400,7 @@ function syncMap() {
   const gk = sg ? [dir, sg.loading, sg.list.length, sg.closure?.lat].join('|') : '';
   if (gk !== mapKeys.sugg) {
     map.setSuggestions(sg?.loading ? [] : sg?.list || [], sg?.closure || null);
-    if (sg && !sg.loading && sg.list.length) map.fitLines(sg.list.map((x) => x.coords));
+    if (sg && !sg.loading && sg.list.length) { map.invalidate(); setTimeout(() => map.fitLines(sg.list.map((x) => x.coords)), 80); }
     mapKeys.sugg = gk;
   }
   const back = state.roundTrip !== false && stops.length >= 2;
@@ -549,7 +557,9 @@ function init() {
   setupImport();
   initAccount();
   requestRender();
-  map.fit(fullStops(routeDir()), displayRoute(routeDir()));
+  // Karte erst vermessen, wenn die Seite steht (startet die App direkt mit sichtbarer Karte)
+  map.invalidate();
+  setTimeout(() => map.fit(fullStops(routeDir()), displayRoute(routeDir())), 120);
   startAutoRefresh();
   window.addEventListener('resize', () => map.invalidate());
   window.addEventListener('scroll', () => document.body.classList.toggle('scrolled', window.scrollY > 8), { passive: true });
