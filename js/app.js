@@ -2,7 +2,7 @@
 import { state, update, subscribe, replaceState, defaultState, model, personById, activePersons, allRoutes, liveSnap, todayIso, SHARED_KEYS } from './state.js';
 import { reverseGeocode, fetchRoute, fetchRouteInfo, optimizeOrder } from './api.js';
 import { MapView } from './map.js';
-import { FUELS, plannedStops, routeKey, mondayOf, addDays, hasOwners, insertDetours } from './calc.js';
+import { FUELS, plannedStops, routeKey, mondayOf, addDays, hasOwners, insertDetours, haversine } from './calc.js';
 import { effectiveOrder, isActive, activeDetours } from './model.js';
 import { h, debounce, toast } from './ui.js';
 import { icon } from './icons.js';
@@ -45,10 +45,11 @@ function setRouteDir(dir) {
 }
 
 /**
- * Stopps der ganzen Route (alle fahren mit) in Fahrtrichtung, mit den heute geltenden Umleitungen.
+ * Stopps der ganzen Route (alle fahren mit) in Fahrtrichtung, mit den heute gefahrenen Umleitungen
+ * (oder den übergebenen – z. B. [] für die normale Strecke).
  * Hin: Fahrer → Abholpunkte → Ziel · Zurück: Ziel → Absetz-Reihenfolge → Fahrer
  */
-function fullStops(dir = 'hin') {
+function fullStops(dir = 'hin', detours = activeDetours(state.detours, todayIso())) {
   const persons = model().persons;
   const driver = personById(state.defaultDriver);
   if (!driver?.address?.lat || !state.destination?.lat) return [];
@@ -73,7 +74,7 @@ function fullStops(dir = 'hin') {
     for (const pid of state.returnOrder || []) { const st = byPid.get(pid); if (st && !mid.includes(st)) mid.push(st); }
     seq = [stops[stops.length - 1], ...mid, ...pick.filter((st) => !mid.includes(st)).reverse(), { ...stops[0], label: `${driver.name} (Ende)` }];
   }
-  return insertDetours(seq, activeDetours(state.detours, todayIso()), dir).map((st) => (st.via
+  return insertDetours(seq, detours, dir).map((st) => (st.via
     ? { ...st, label: st.name, draggable: admin, popup: () => detourPopup(st.detour) }
     : st));
 }
@@ -150,33 +151,78 @@ function displayRoute(dir) {
   return dir === 'rueck' && state.roundTrip === false ? null : shared || null;
 }
 
-const infos = new Map(); // Schlüssel → { refs, baseDistance, hasDetour, loading, error }
+const infos = new Map(); // Schlüssel → { distance, duration, refs, loading, error }
+
+/** Länge, Fahrzeit und befahrene Straßen einer Stoppfolge (zwischengespeichert). */
+function infoFor(stops) {
+  const key = coordsKey(stops);
+  let e = infos.get(key);
+  if (!e) {
+    e = { loading: true };
+    infos.set(key, e);
+    fetchRouteInfo(stops)
+      .then((r) => Object.assign(e, r))
+      .catch(() => { e.error = true; setTimeout(() => infos.delete(key), 60_000); }) // später noch einmal versuchen
+      .finally(() => { e.loading = false; requestRender(); loadTraffic(); });
+  }
+  return e;
+}
 
 /** Befahrene Straßen (für die Autobahn-Meldungen) und Länge ohne Umleitung. */
 function routeInfo(dir) {
   const stops = fullStops(dir);
   if (stops.length < 2) return null;
-  const key = coordsKey(stops);
-  let e = infos.get(key);
-  if (!e) {
-    const base = stops.filter((st) => !st.via);
-    e = { loading: true, hasDetour: base.length !== stops.length };
-    infos.set(key, e);
-    (async () => {
-      try {
-        e.refs = (await fetchRouteInfo(stops)).refs;
-        if (e.hasDetour && base.length >= 2) e.baseDistance = (await fetchRouteInfo(base)).distance;
-      } catch {
-        e.error = true;
-        setTimeout(() => infos.delete(key), 60_000); // später noch einmal versuchen
-      } finally {
-        e.loading = false;
-        requestRender();
-        loadTraffic();
+  const e = infoFor(stops);
+  const hasDetour = stops.some((st) => st.via);
+  const base = hasDetour ? infoFor(fullStops(dir, [])) : null;
+  return { ...e, hasDetour, baseDistance: base?.distance, loading: e.loading || !!base?.loading, error: e.error || base?.error };
+}
+
+/** Normale Strecke einer Richtung und jede Umleitungs-Variante: Länge, Fahrzeit, Mehr-km und Mehr-Minuten. */
+function variantInfo(dir, detour = null) {
+  const baseStops = fullStops(dir, []);
+  if (baseStops.length < 2) return null;
+  const base = infoFor(baseStops);
+  if (!detour) return base.loading || base.error ? null : { km: base.distance / 1000, min: base.duration / 60 };
+  const w = infoFor(fullStops(dir, [{ ...detour, dir, use: true }]));
+  if (base.loading || w.loading || base.error || w.error) return null;
+  return { km: w.distance / 1000, min: w.duration / 60, extraKm: (w.distance - base.distance) / 1000, extraMin: (w.duration - base.duration) / 60 };
+}
+
+/** Kleinster Abstand (km) eines Punkts zu einer Linie aus Punkten. */
+const distToLine = (p, line) => line.reduce((m, q) => Math.min(m, haversine(p, q)), Infinity);
+
+/**
+ * Ausweichrouten vom Routenplaner: je Teilstück der normalen Strecke bis zu zwei Alternativen.
+ * Als Wegpunkt dient die Stelle der Alternative, die am weitesten von der normalen Strecke weg ist.
+ * → [{ lat, lng, label, place, extraKm, extraMin }]
+ */
+async function suggestDetours(dir) {
+  const stops = fullStops(dir, []);
+  const out = [];
+  for (let i = 1; i < stops.length; i++) {
+    const a = stops[i - 1];
+    const b = stops[i];
+    if (haversine([a.lat, a.lng], [b.lat, b.lng]) < 2) continue; // zu kurz für sinnvolle Umwege
+    const routes = await fetchRoute([a, b]);
+    if (routes.length < 2) continue;
+    const main = routes[0].coords.filter((_, k) => k % 2 === 0);
+    for (const alt of routes.slice(1)) {
+      let best = null;
+      let bestD = 0;
+      for (let k = 0; k < alt.coords.length; k += 3) {
+        const d = distToLine(alt.coords[k], main);
+        if (d > bestD) { bestD = d; best = alt.coords[k]; }
       }
-    })();
+      if (best && bestD > 0.3) out.push({ lat: best[0], lng: best[1], extraKm: (alt.distance - routes[0].distance) / 1000, extraMin: (alt.duration - routes[0].duration) / 60 });
+    }
   }
-  return e;
+  const list = out.sort((x, y) => x.extraKm - y.extraKm).slice(0, 4);
+  for (const s of list) {
+    s.label = await reverseGeocode(s.lat, s.lng);
+    s.place = shortPlace(s.label);
+  }
+  return list;
 }
 
 // Sperrungen & Baustellen auf der Strecke (je Richtung)
@@ -380,7 +426,7 @@ function releasePointer() {
 
 const ctx = () => ({
   map, go, toggleMap, data: dataActions, openAccount, setDestination, adminSet: (fn, text) => safe(() => adminSet(fn, text)),
-  refreshRoute, routeDir, setRouteDir, displayRoute, routeInfo, traffic: () => traffic, loadTraffic, focusIncident,
+  refreshRoute, routeDir, setRouteDir, displayRoute, routeInfo, variantInfo, suggestDetours, traffic: () => traffic, loadTraffic, focusIncident,
 });
 
 function render() {

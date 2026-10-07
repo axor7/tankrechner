@@ -762,3 +762,14 @@ details.more > * + * { margin-top: .6rem; }
 .detour-dates > .field { flex: 1; min-width: 0; }
 .spin { animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* Umleitungs-Varianten */
+.variant-row { align-items: flex-start; gap: .7rem; text-align: left; }
+.variant-radio { width: 1.35rem; height: 1.35rem; border-radius: 50%; border: 2px solid var(--muted-2); display: grid; place-items: center; flex: none; margin-top: .1rem; color: #fff; }
+.variant-radio.on { background: var(--primary); border-color: var(--primary); }
+.variant-nums { display: flex; flex-wrap: wrap; gap: .2rem .7rem; font-size: .85rem; margin-top: .1rem; }
+.variant-extra { color: #ea580c; font-weight: 600; font-size: .85rem; }
+.variant-tag { font-size: .72rem; font-weight: 700; color: var(--primary); background: var(--primary-soft); border-radius: 999px; padding: .1rem .5rem; white-space: nowrap; flex: none; }
+.suggest-box { margin-top: .4rem; }
+.variant-row.pickable { cursor: pointer; }
+.variant-row.pickable:active { background: var(--fill); }

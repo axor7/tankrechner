@@ -243,17 +243,53 @@ export function setWeek(pid, monday, mode) {
 const DIR_TEXT = { hin: 'Hinfahrt', rueck: 'Rückfahrt', both: 'Hin- und Rückfahrt' };
 const shortDate = (iso) => fmtDate(iso) + iso.slice(0, 4);
 
-/** Umleitung eintragen: gilt ab `from` (frühestens heute) bis `until` (leer = bis sie beendet wird). */
-export function addDetour({ dir = 'rueck', lat, lng, place, label, note = '', from, until = null }) {
+const hitsDir = (d, dir) => d.dir === dir || d.dir === 'both' || dir === 'both';
+const usedNow = (d, today) => d.use !== false && (!d.until || d.until >= today);
+
+/**
+ * Umleitung eintragen: gilt ab `from` (frühestens heute) bis `until` (leer = bis sie beendet wird).
+ * Wird in der Richtung schon eine Umleitung gefahren, kommt die neue als Variante dazu (use: false) – auswählen mit chooseDetour.
+ */
+export function addDetour({ dir = 'rueck', lat, lng, place, label, note = '', from, until = null, use }) {
   if (!isAdmin()) deny();
   if (lat == null || lng == null) throw new Error('Bitte wähle aus, über welchen Ort die Umleitung führt.');
   const today = todayIso();
   const start = from && from > today ? from : today; // nie rückwirkend
   if (until && until < start) throw new Error('„Gilt bis“ liegt vor „gilt ab“.');
-  const d = { id: uid(), dir, lat, lng, place: place || 'Umleitung', label: label || place || '', note: note.trim(), from: start, until: until || null, at: Date.now(), by: nameOf(me()) };
+  const taken = (state.detours || []).some((x) => hitsDir(x, dir) && usedNow(x, today));
+  const d = {
+    id: uid(), dir, lat, lng, place: place || 'Umleitung', label: label || place || '', note: note.trim(), from: start, until: until || null,
+    use: use ?? !taken, at: Date.now(), by: nameOf(me()),
+  };
   update((s) => { s.detours = [...(s.detours || []), d]; });
-  log(`Umleitung ${DIR_TEXT[dir]} über ${d.place}${d.note ? ` (${d.note})` : ''}: ab ${shortDate(start)}${until ? ` bis ${shortDate(until)}` : ''}`);
+  log(`Umleitung ${DIR_TEXT[dir]} über ${d.place}${d.note ? ` (${d.note})` : ''}${d.use ? '' : ' als Variante'}: ab ${shortDate(start)}${until ? ` bis ${shortDate(until)}` : ''}`);
   return d;
+}
+
+/**
+ * Welche Umleitung fahren wir in dieser Richtung? id = null: normale Strecke.
+ * Gilt ab heute: bisher gefahrene Umleitungen enden gestern und bleiben ab heute als Variante erhalten.
+ */
+export function chooseDetour(dir, id) {
+  if (!isAdmin()) deny();
+  const today = todayIso();
+  const pick = id ? (state.detours || []).find((x) => x.id === id) : null;
+  update((s) => {
+    const extra = [];
+    for (const d of s.detours || []) {
+      if (d.id === id || !hitsDir(d, pick?.dir || dir) || !usedNow(d, today)) continue;
+      if ((d.from || today) < today) {
+        extra.push({ ...d, id: uid(), from: today, use: false, at: Date.now() });
+        d.until = addDays(today, -1);
+      } else d.use = false;
+    }
+    if (id) {
+      const x = s.detours.find((d) => d.id === id);
+      if (x) { x.use = true; if ((x.from || today) < today) x.from = today; }
+    }
+    s.detours = [...s.detours, ...extra];
+  });
+  log(`${DIR_TEXT[pick?.dir || dir]}: ${pick ? `ab heute Umleitung über ${pick.place}` : 'ab heute wieder die normale Strecke'}`);
 }
 
 /** Umleitungspunkt verschieben (z. B. auf der Karte gezogen) – gilt ab heute. */
@@ -293,10 +329,10 @@ export function endDetour(id) {
   const d = (state.detours || []).find((x) => x.id === id);
   if (!d || (d.until && d.until < today)) return; // schon vorbei
   update((s) => {
-    if ((d.from || today) >= today) s.detours = s.detours.filter((x) => x.id !== id); // hat noch nie gegolten → löschen
+    if ((d.from || today) >= today || d.use === false) s.detours = s.detours.filter((x) => x.id !== id); // hat nie gegolten → löschen
     else s.detours.find((x) => x.id === id).until = addDays(today, -1);
   });
-  log(`Umleitung über ${d.place} beendet – ab heute wieder die normale Strecke`);
+  log(d.use === false ? `Umleitungs-Variante über ${d.place} gelöscht` : `Umleitung über ${d.place} beendet – ab heute wieder die normale Strecke`);
 }
 
 /** Admin-Einstellung ändern und protokollieren. */

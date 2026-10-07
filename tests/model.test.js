@@ -304,3 +304,20 @@ test('Umleitung „beide Richtungen“ wird dort eingefügt, wo der Umweg am kle
   assert.deepEqual(insertDetours([...stops].reverse(), d, 'rueck').map((x) => x.id), ['c', 'via:x', 'b', 'a']);
   assert.equal(insertDetours(stops, [{ ...d[0], dir: 'rueck' }], 'hin').length, 3);
 });
+
+test('Umleitungs-Varianten: nur die gewählte (use) wird gefahren', () => {
+  const s = shared();
+  s.persons[1].address = { label: 'Anna', lat: 49.0, lng: 8.6 };
+  s.persons[1].plan = [{ from: '2026-09-01', hin: MOFR, rueck: MOFR, at: 1 }];
+  s.detours = [
+    { id: 'a', dir: 'rueck', lat: 49.05, lng: 8.75, place: 'A', from: MO, use: false },
+    { id: 'b', dir: 'rueck', lat: 48.95, lng: 8.75, place: 'B', from: MO },
+  ];
+  const m = buildModel(s);
+  const t = m.trip(DI, 'rueck');
+  const ids = () => plannedStops(t, tripSnap(liveWeekSnap(s, m.persons, 1), t, {}, {}, DI), 'rueck').map((x) => x.id);
+  assert.deepEqual(ids(), ['dest', 'via:b', 'p:anna', 'p:max']);
+  s.detours[0].use = true;
+  s.detours[1].use = false;
+  assert.deepEqual(ids(), ['dest', 'via:a', 'p:anna', 'p:max']);
+});

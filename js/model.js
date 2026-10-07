@@ -153,7 +153,7 @@ export function liveWeekSnap(shared, persons, price) {
     manualKm: Number(shared.manualKm) || 0,
     split: { ...(shared.split || {}) },                 // Aufteilungsregel gilt pro Woche
     // Umleitungen (gelten je Datum von–bis; eingefrorene Wochen behalten ihre)
-    detours: (shared.detours || []).filter((d) => d?.lat != null).map(({ id, dir, lat, lng, place, from, until }) => ({ id, dir, lat, lng, place, from, until })),
+    detours: (shared.detours || []).filter((d) => d?.lat != null).map(({ id, dir, lat, lng, place, from, until, use }) => ({ id, dir, lat, lng, place, from, until, use })),
     at: Date.now(),
   };
 }
@@ -171,8 +171,8 @@ const short = (label, fallback) => (label ? label.split(',')[0] : fallback);
  * Strecke einer Fahrt als calc.js-Snapshot: Fahrer-Adresse → Abholpunkte (in Reihenfolge) → Ziel.
  * Mitfahrer ohne Adresse steigen beim Fahrer zu. Ohne Fahrer-Adresse oder Ziel: manuelle Kilometer.
  */
-/** Umleitungen, die an diesem Tag gelten (von–bis, beide Tage eingeschlossen). */
-export const activeDetours = (detours, date) => (detours || []).filter((d) => d?.lat != null && (!d.from || d.from <= date) && (!d.until || date <= d.until));
+/** Umleitungen, die an diesem Tag gefahren werden (von–bis, beide Tage eingeschlossen; Varianten mit use: false nicht). */
+export const activeDetours = (detours, date) => (detours || []).filter((d) => d?.lat != null && d.use !== false && (!d.from || d.from <= date) && (!d.until || date <= d.until));
 
 export function tripSnap(week, trip, routes = {}, names = {}, date = null) {
   const base = { consumption: week.consumption, price: week.price, extraPerKm: week.extraPerKm, fuel: week.fuel, split: week.split };

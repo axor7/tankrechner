@@ -2,7 +2,7 @@
 import { state, update, model, personById, todayIso } from './state.js';
 import { effectiveOrder, isActive } from './model.js';
 import { isAdmin } from './account.js';
-import { me, adminSet, setAddress, addDetour, endDetour, setDetourUntil } from './actions.js';
+import { me, adminSet, setAddress, addDetour, endDetour, setDetourUntil, chooseDetour } from './actions.js';
 import { SOURCE, KIND_LABEL, isClosure, statusText, timeStatus, fmtWhen } from './traffic.js';
 import { priceCard, timeCard, costCard } from './tab-fuel.js';
 import { addressInput } from './address.js';
@@ -194,34 +194,105 @@ function detourForm(c) {
       h('button', { type: 'button', class: 'btn', onclick: () => { draft = null; update(() => {}); } }, 'Abbrechen')));
 }
 
+let suggest = null; // { dir, loading, list, error }
+
+const fmtMin = (m) => `${Math.round(m)} min`;
+const fmtPlus = (v, fmt) => (Math.abs(v) < 0.05 ? '±0' : `${v > 0 ? '+' : '−'}${fmt(Math.abs(v))}`);
+
+/** Eine Zeile: km, Fahrzeit und (bei Umleitungen) Mehr-km / Mehr-Minuten gegenüber der normalen Strecke. */
+function variantLine(v, isBase) {
+  if (!v) return h('span', { class: 'sub' }, 'wird berechnet …');
+  return h('span', { class: 'variant-nums' },
+    h('span', {}, `${fmtKm(v.km)} · ${fmtDuration(v.min * 60)}`),
+    isBase ? null : h('span', { class: 'variant-extra' }, `${fmtPlus(v.extraKm, fmtKm)} · ${fmtPlus(v.extraMin, fmtMin)}`));
+}
+
+function detourActions(d, c, today) {
+  return h('span', { class: 'detour-actions', onclick: (e) => e.stopPropagation() },
+    h('label', { class: 'small muted' }, 'bis ',
+      h('input', { type: 'date', value: d.until || '', min: d.from > today ? d.from : today, onchange: (e) => safe(() => { setDetourUntil(d.id, e.target.value || null); c.refreshRoute(); }) })),
+    h('button', {
+      type: 'button', class: 'link small',
+      onclick: () => {
+        const remove = d.from > today || d.use === false;
+        if (confirm(remove ? `Umleitung über ${d.place} löschen?` : `Umleitung über ${d.place} beenden?\n\nAb heute wird wieder die normale Strecke gerechnet. Bisherige Fahrten bleiben, wie sie waren.`)) {
+          safe(() => { endDetour(d.id); c.refreshRoute(); });
+        }
+      },
+    }, d.from > today || d.use === false ? 'Löschen' : 'Beenden'));
+}
+
+/** Normale Strecke und alle Umleitungs-Varianten einer Richtung – eine davon wird gefahren. */
+function variantList(dir, list, c, admin, today) {
+  const chosen = list.find((d) => d.use !== false);
+  const pick = (id) => safe(() => { chooseDetour(dir, id); c.refreshRoute(); toast(id ? 'Umleitung ausgewählt – gilt ab heute' : 'Ab heute wieder die normale Strecke', 'ok'); });
+  const row = (d) => {
+    const on = d ? d === chosen : !chosen;
+    const v = c.variantInfo(dir, d);
+    const choose = admin && !on ? () => pick(d ? d.id : null) : null;
+    return h('div', {
+      class: `list-row variant-row ${on ? 'on' : ''} ${choose ? 'pickable' : ''}`, role: admin ? 'button' : null, tabindex: choose ? '0' : null, 'aria-pressed': admin ? String(on) : null,
+      onclick: choose, onkeydown: choose ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); choose(); } } : null,
+    },
+    h('span', { class: `variant-radio ${on ? 'on' : ''}` }, on ? icon('check', { size: 13 }) : null),
+    h('span', { class: 'grow' },
+      h('span', { class: 'title' }, d ? `über ${d.place}` : 'Normale Strecke', d?.dir === 'both' ? h('span', { class: 'muted small' }, ' · Hin & Rück') : null),
+      d?.note ? h('span', { class: 'sub' }, d.note) : null,
+      variantLine(v, !d),
+      d ? h('span', { class: 'sub' }, d.use === false ? `Variante${d.until ? ` · bis ${fmtDate(d.until)}` : ''}` : detourText(d, today)) : null,
+      d && admin ? detourActions(d, c, today) : null),
+    on ? h('span', { class: 'variant-tag' }, 'wird gefahren') : null);
+  };
+  return h('div', { class: 'list' }, row(null), list.map(row));
+}
+
 function detoursCard(c) {
   const admin = isAdmin();
   const today = todayIso();
-  const list = (state.detours || []).filter((d) => !d.until || d.until >= today).sort((a, b) => (a.from || '').localeCompare(b.from || ''));
-  if (!admin && !list.length) return null;
+  const live = (state.detours || []).filter((d) => !d.until || d.until >= today).sort((a, b) => (a.from || '').localeCompare(b.from || ''));
+  if (!admin && !live.length) return null;
+  const dirs = state.roundTrip !== false ? ['hin', 'rueck'] : ['hin'];
+  const sections = dirs.map((dir) => [dir, live.filter((d) => d.dir === dir || d.dir === 'both')]).filter(([dir, list]) => list.length || dir === c.routeDir());
+  const sug = suggest && suggest.dir === c.routeDir() ? suggest : null;
   return h('section', { class: 'card', id: 'detours' },
     h('h2', {}, 'Umleitungen'),
-    admin ? h('p', { class: 'hint small' }, 'Fahrt ihr wegen einer Sperrung einen Umweg? Tragt ihn ein – dann rechnet die App ab dem Tag mit der längeren Strecke. Bisherige Fahrten bleiben, wie sie waren.') : null,
-    list.length ? h('div', { class: 'list' }, list.map((d) => h('div', { class: 'list-row detour-row' },
-      h('span', { class: 'incident-sq detour' }, icon('signpost', { size: 15 })),
-      h('span', { class: 'grow' },
-        h('span', { class: 'title' }, `${DIR_TEXT[d.dir]} über ${d.place}`),
-        d.note ? h('span', { class: 'sub' }, d.note) : null,
-        h('span', { class: 'sub' }, detourText(d, today)),
-        admin ? h('span', { class: 'detour-actions' },
-          h('label', { class: 'small muted' }, 'bis ',
-            h('input', { type: 'date', value: d.until || '', min: d.from > today ? d.from : today, onchange: (e) => safe(() => { setDetourUntil(d.id, e.target.value || null); c.refreshRoute(); }) })),
-          h('button', {
-            type: 'button', class: 'link small',
-            onclick: () => {
-              const future = d.from > today;
-              if (confirm(future ? `Umleitung über ${d.place} löschen?` : `Umleitung über ${d.place} beenden?\n\nAb heute wird wieder die normale Strecke gerechnet. Bisherige Fahrten bleiben, wie sie waren.`)) {
-                safe(() => { endDetour(d.id); c.refreshRoute(); });
-              }
-            },
-          }, d.from > today ? 'Löschen' : 'Beenden')) : null),
-    ))) : null,
-    admin ? (draft ? detourForm(c) : h('button', { type: 'button', class: 'btn btn-small', onclick: () => openDetourForm({}) }, icon('signpost', { size: 15 }), 'Umleitung eintragen')) : null,
+    admin ? h('p', { class: 'hint small' }, 'Tragt mögliche Umwege ein oder lasst euch Ausweichrouten vorschlagen – je Variante seht ihr Kilometer und Fahrzeit. Antippen wählt aus, welche ihr fahrt; ab dann rechnet die App damit. Bisherige Fahrten bleiben, wie sie waren.') : null,
+    sections.map(([dir, list]) => [
+      h('h3', { class: 'incident-h' }, DIR_TEXT[dir]),
+      list.length || admin ? variantList(dir, list, c, admin, today) : null,
+    ]),
+    admin && sug ? h('div', { class: 'suggest-box' },
+      h('h3', { class: 'incident-h' }, `Vorschläge für die ${DIR_TEXT[sug.dir]}`),
+      sug.loading ? h('p', { class: 'hint' }, 'Ausweichrouten werden gesucht …')
+        : sug.error ? h('p', { class: 'callout' }, `Keine Vorschläge möglich (${sug.error}).`)
+          : !sug.list.length ? h('p', { class: 'hint' }, 'Der Routenplaner kennt keine sinnvollen Ausweichrouten. Tippt die Umleitung selbst auf der Karte an.')
+            : h('div', { class: 'list' }, sug.list.map((x) => h('div', { class: 'list-row variant-row' },
+              h('span', { class: 'incident-sq detour' }, icon('signpost', { size: 15 })),
+              h('span', { class: 'grow' },
+                h('span', { class: 'title' }, `über ${x.place}`),
+                h('span', { class: 'variant-extra' }, `${fmtPlus(x.extraKm, fmtKm)} · ${fmtPlus(x.extraMin, fmtMin)}`)),
+              h('button', {
+                type: 'button', class: 'btn btn-small',
+                onclick: () => safe(() => {
+                  addDetour({ dir: sug.dir, lat: x.lat, lng: x.lng, label: x.label, place: x.place, note: 'Vorschlag Routenplaner', use: false });
+                  sug.list = sug.list.filter((y) => y !== x);
+                  if (!sug.list.length) suggest = null; // alle übernommen
+                  toast('Als Variante übernommen – antippen, um sie zu fahren', 'ok');
+                }),
+              }, 'Übernehmen')))),
+      h('p', { class: 'hint small' }, 'Der Routenplaner kennt keine Sperrungen – prüft, ob der Vorschlag die gesperrte Stelle wirklich umfährt.')) : null,
+    admin ? (draft ? detourForm(c) : h('div', { class: 'row gap wrap' },
+      h('button', { type: 'button', class: 'btn btn-small', onclick: () => openDetourForm({}) }, icon('signpost', { size: 15 }), 'Umleitung eintragen'),
+      h('button', {
+        type: 'button', class: 'btn btn-small', disabled: !!sug?.loading,
+        onclick: async () => {
+          const dir = c.routeDir();
+          suggest = { dir, loading: true, list: [] };
+          update(() => {});
+          try { suggest = { dir, loading: false, list: await c.suggestDetours(dir) }; } catch (e) { suggest = { dir, loading: false, list: [], error: e.message }; }
+          update(() => {});
+        },
+      }, icon('sparkles', { size: 15 }), `Ausweichrouten vorschlagen (${DIR_TEXT[c.routeDir()]})`))) : null,
   );
 }
 

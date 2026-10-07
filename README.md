@@ -11,7 +11,7 @@ Handy: Tab-Leiste unten · Tablet/Computer: Seitenleiste · Karte ein-/ausblendb
 
 **Admin** (wer die Fahrgemeinschaft erstellt; Admin-Rechte lassen sich teilen) – volle Kontrolle:
 - Ziel und Startadresse, **automatisch beste Abholreihenfolge** (Routenplaner), von Hand änderbar; Rückfahrt-Reihenfolge
-- **Umleitungen** eintragen (z. B. wegen einer Sperrung): Richtung, „über“ (Adresse oder auf der Karte tippen), Grund, gilt ab/bis – die App rechnet ab dem Tag mit der längeren Strecke
+- **Umleitungen** eintragen (z. B. wegen einer Sperrung): Richtung, „über“ (Adresse oder auf der Karte tippen), Grund, gilt ab/bis – oder **Ausweichrouten vorschlagen** lassen. Alle Varianten stehen mit Kilometern, Fahrzeit und Mehr-km/Mehr-Minuten nebeneinander; antippen wählt, welche gefahren wird (ab heute, die App rechnet dann damit)
 - Auto, Spritpreis (live an der Strecke), Aufteilungsregel, Mitfahrer (auch ohne App); Entfernen wirkt erst ab heute, vergangene Fahrten bleiben in der Abrechnung
 - Jeden Tag bearbeiten: wer fährt, anderer Fahrer, freier Tag
 - **Ganze Woche auf einmal:** im Kalender auf die KW tippen → je Person „Regelplan / Ganze Woche / Gar nicht“
