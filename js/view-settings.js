@@ -1,5 +1,5 @@
 // Ansicht „Einstellungen“: Profil, Ansicht, Fahrgemeinschaft – und für Admins die volle Kontrolle.
-import { state, update, model, personById, persons } from './state.js';
+import { state, update, model, personById, persons, todayIso } from './state.js';
 import { isActive, planFor, hasPlan } from './model.js';
 import { paypalUser, paypalLink } from './pay.js';
 import { carCard } from './tab-fuel.js';
@@ -8,7 +8,7 @@ import { planEditor } from './view-trips.js';
 import { addressInput } from './address.js';
 import { inGroup, isAdmin, isLoggedIn, groupName, claims, claimPerson, members, myUserId, setRole, removeMember, loadLog, inviteLink, renewInvite } from './account.js';
 import { me, setAddress, setPaypal, setMyName, addPerson, removePerson, setPersonField, adminSet, setDefaultDriver } from './actions.js';
-import { h, toast } from './ui.js';
+import { h, toast, fmtDate } from './ui.js';
 import { icon } from './icons.js';
 
 export const settingsUi = { openPerson: null, showInactive: false, focus: null, log: null, logLoading: false };
@@ -206,6 +206,36 @@ function dataSection(ctx) {
   ));
 }
 
+const STATES = [['DE-BW', 'Baden-Württemberg'], ['DE-BY', 'Bayern'], ['DE-BE', 'Berlin'], ['DE-BB', 'Brandenburg'], ['DE-HB', 'Bremen'], ['DE-HH', 'Hamburg'],
+  ['DE-HE', 'Hessen'], ['DE-MV', 'Mecklenburg-Vorpommern'], ['DE-NI', 'Niedersachsen'], ['DE-NW', 'Nordrhein-Westfalen'], ['DE-RP', 'Rheinland-Pfalz'],
+  ['DE-SL', 'Saarland'], ['DE-SN', 'Sachsen'], ['DE-ST', 'Sachsen-Anhalt'], ['DE-SH', 'Schleswig-Holstein'], ['DE-TH', 'Thüringen']];
+
+function holidaySection() {
+  const hol = state.holidays || {};
+  const today = todayIso();
+  const upcoming = (hol.periods || []).filter((p) => p.end >= today && (!hol.from || p.end >= hol.from)).slice(0, 4);
+  const stateName = STATES.find(([c]) => c === hol.region)?.[1] || hol.region;
+  const span = (p) => (p.start === p.end ? fmtDate(p.start) : `${fmtDate(p.start)} – ${fmtDate(p.end)}`);
+  const set = (fn, text) => safe(() => adminSet(fn, text));
+  return section('Schulferien', h('div', { class: 'card' },
+    h('label', { class: 'switch-row' }, h('span', {}, h('strong', {}, 'In den Schulferien keine Fahrten')),
+      h('input', {
+        type: 'checkbox', class: 'switch', checked: !!hol.enabled,
+        onchange: (e) => set((s) => { s.holidays = { ...s.holidays, enabled: e.target.checked, from: e.target.checked ? today : s.holidays?.from, fetchedAt: 0 }; },
+          `Schulferien ${e.target.checked ? 'an: in den Ferien keine Fahrten' : 'aus'}`),
+      })),
+    hol.enabled ? [
+      h('label', { class: 'field' }, 'Bundesland',
+        h('select', { onchange: (e) => set((s) => { s.holidays = { ...s.holidays, region: e.target.value, periods: [], fetchedAt: 0 }; }, `Schulferien: ${STATES.find(([c]) => c === e.target.value)?.[1]}`) },
+          STATES.map(([c, n]) => h('option', { value: c, selected: c === hol.region }, n)))),
+      upcoming.length
+        ? h('ul', { class: 'holiday-list' }, upcoming.map((p) => h('li', {}, h('span', {}, p.name), h('span', { class: 'muted' }, span(p)))))
+        : h('p', { class: 'hint small' }, `Ferientermine für ${stateName} werden geladen …`),
+    ] : null,
+    h('p', { class: 'hint small' }, 'Nach Regelplan fährt in den Ferien niemand, es entstehen keine Kosten. Wer trotzdem fährt, tippt den Tag im Kalender an und trägt sich ein – oder stellt die ganze Woche über die KW ein. Gilt ab dem Einschalten, vergangene Wochen bleiben, wie sie waren.'),
+  ));
+}
+
 export function renderSettings(el, ctx) {
   const admin = isAdmin();
   el.append(...[profileSection(), viewSection(), groupSection(ctx)].filter(Boolean));
@@ -215,6 +245,7 @@ export function renderSettings(el, ctx) {
       membersSection(),
       section('Auto & Spritpreis', carCard(), 'Den aktuellen Spritpreis und Tankstellen findest du unter Strecke → Spritpreis.'),
       section('Aufteilung', rulesCard()),
+      holidaySection(),
       logSection(),
       dataSection(ctx),
     ].filter(Boolean));

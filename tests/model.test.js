@@ -321,3 +321,22 @@ test('Umleitungs-Varianten: nur die gewählte (use) wird gefahren', () => {
   s.detours[1].use = false;
   assert.deepEqual(ids(), ['dest', 'via:a', 'p:anna', 'p:max']);
 });
+
+test('Schulferien: nach Regelplan keine Fahrt, eigener Eintrag geht vor, nicht rückwirkend', () => {
+  const s = shared();
+  s.holidays = { enabled: true, from: DI, periods: [{ start: MO, end: MI, name: 'Herbstferien' }] };
+  let m = buildModel(s);
+  assert.ok(m.rides('max', MO, 'hin'));                 // vor dem Einschalten: unverändert
+  assert.ok(!m.rides('max', DI, 'hin'));                // Ferien: niemand nach Plan
+  assert.equal(m.holiday(DI).name, 'Herbstferien');
+  assert.equal(m.trip(DI, 'hin'), null);
+  assert.ok(m.rides('max', '2026-10-01', 'hin'));       // nach den Ferien wieder normal
+  // Anna fährt trotzdem (eigener Eintrag) – und Max auch
+  const profiles = [{ personId: 'anna', data: { days: { [MI]: { hin: true, at: 5 } } } }];
+  s.days[MI] = { people: { max: { hin: true, at: 5 } } };
+  m = buildModel(s, profiles);
+  assert.deepEqual(m.dayInfo(MI).riders.hin.sort(), ['anna', 'max']);
+  // ausgeschaltet: wieder alles nach Plan
+  s.holidays.enabled = false;
+  assert.ok(buildModel(s).rides('max', DI, 'hin'));
+});

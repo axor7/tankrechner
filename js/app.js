@@ -1,6 +1,6 @@
 // Einstiegspunkt: App-Gerüst (Navigation je Rolle, Karte), Strecke des Admins, Hintergrund-Berechnungen.
 import { state, update, subscribe, replaceState, defaultState, model, personById, activePersons, allRoutes, liveSnap, todayIso, SHARED_KEYS } from './state.js';
-import { reverseGeocode, fetchRoute, fetchRouteInfo, valhallaRoute, optimizeOrder } from './api.js';
+import { reverseGeocode, fetchRoute, fetchRouteInfo, valhallaRoute, optimizeOrder, fetchSchoolHolidays } from './api.js';
 import { MapView } from './map.js';
 import { FUELS, plannedStops, routeKey, mondayOf, addDays, hasOwners, insertDetours } from './calc.js';
 import { searchAlternatives, usesClosure } from './detours.js';
@@ -455,10 +455,25 @@ function render() {
   if ($('#day-dialog')?.open) renderSheet();
   syncMap();
   ensureRoutes();
-  if (isAdmin()) { refreshRoute(); freezeLater(); }
+  if (isAdmin()) { refreshRoute(); freezeLater(); ensureHolidays(); }
 }
 
 const freezeLater = debounce(() => freezePastWeeks(liveSnap), 1500);
+
+// Schulferien laden (Admin) – gespeichert in den gemeinsamen Daten, damit alle gleich rechnen
+let holidaysLoading = false;
+async function ensureHolidays() {
+  const hol = state.holidays;
+  if (!isAdmin() || !hol?.enabled || holidaysLoading) return;
+  if (hol.fetchedFor === hol.region && Date.now() - (hol.fetchedAt || 0) < 14 * 864e5) return;
+  holidaysLoading = true;
+  try {
+    const t0 = todayIso();
+    const from = addDays(hol.from && hol.from < t0 ? hol.from : t0, -60); // auch Ferien, die schon laufen
+    const periods = await fetchSchoolHolidays(hol.region, from, addDays(t0, 540));
+    update((s) => { s.holidays = { ...s.holidays, periods, fetchedAt: Date.now(), fetchedFor: hol.region }; });
+  } catch { /* später noch einmal */ } finally { holidaysLoading = false; }
+}
 
 // ---------- Daten ----------
 

@@ -14,6 +14,7 @@ Handy: Tab-Leiste unten · Tablet/Computer: Seitenleiste · Karte ein-/ausblendb
 - **Sperrungen umfahren:** Führt eure Route durch eine gemeldete Sperrung, zeigt die Strecken-Ansicht oben einen roten Hinweis mit **„Ausweichrouten anzeigen“**. Die Umfahrungen rechnet Valhalla (FOSSGIS) mit der Sperrung als verbotener Stelle, jede wird als komplette Fahrt nachgerechnet (genau diese km und Minuten zählen für die Kosten). Antippen, Zeitraum wählen (**gilt ab** – auch rückwirkend – und **gilt bis**, vorbelegt mit dem Zeitraum der Meldung, oder **ohne Enddatum**) → „Diese Route fahren“. Zeitraum später änderbar, Umleitung löschbar, „Normale Strecke“ = ab heute wieder normal.
 - Auto, Spritpreis (live an der Strecke), Aufteilungsregel, Mitfahrer (auch ohne App); Entfernen wirkt erst ab heute, vergangene Fahrten bleiben in der Abrechnung
 - Jeden Tag bearbeiten: wer fährt, anderer Fahrer, freier Tag
+- **Schulferien** (Einstellungen, Standard: Thüringen): in den Ferien fährt nach Regelplan niemand; wer trotzdem fährt, trägt den Tag (oder die KW) selbst ein. Termine von der OpenHolidays API, gilt ab dem Einschalten
 - **Ganze Woche auf einmal:** im Kalender auf die KW tippen → je Person „Regelplan / Ganze Woche / Gar nicht“
 - **Prognose** für die kommenden Wochen: Gesamtkosten und Anteil jeder Person, die in der Woche mitfährt
 - Alle offenen Beträge, als bezahlt markieren, Nachricht/PayPal-Link kopieren
@@ -77,7 +78,7 @@ Der Key wird nur in deinem Browser gespeichert. Ohne Key funktioniert alles mit 
 
 Ohne Anmeldung liegen alle Daten (Personen, Fahrten, Einstellungen) nur im `localStorage` deines Browsers. In einer Fahrgemeinschaft liegen die gemeinsamen Daten in der Supabase-Datenbank; lesen und ändern können sie nur deren Mitglieder. Tankerkönig-Key und Messwerte bleiben immer auf dem Gerät.
 Über das Menü ☰ kannst du sie als JSON exportieren/importieren, z. B. um sie auf ein anderes Gerät zu übertragen.
-Externe Dienste: OpenStreetMap (Karte), OSRM (Routing), Valhalla/FOSSGIS (Umleitungen um Sperrungen), Photon (Adresssuche), Tankerkönig (Preise), Autobahn GmbH des Bundes (Sperrungen & Baustellen, [verkehr.autobahn.de](https://verkehr.autobahn.de/o/autobahn/)).
+Externe Dienste: OpenStreetMap (Karte), OSRM (Routing), Valhalla/FOSSGIS (Umleitungen um Sperrungen), Photon (Adresssuche), Tankerkönig (Preise), OpenHolidays (Schulferien), Autobahn GmbH des Bundes (Sperrungen & Baustellen, [verkehr.autobahn.de](https://verkehr.autobahn.de/o/autobahn/)).
 
 Sperrungen auf Bundes-, Landes- und Kreisstraßen gibt es nicht als offene Echtzeitdaten. Der Routenplaner (OSRM) kennt nur Sperrungen, die in OpenStreetMap eingetragen sind (meist längere Baustellen) – für alles andere eine Umleitung eintragen.
 

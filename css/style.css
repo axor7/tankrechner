@@ -794,3 +794,9 @@ details.more > * + * { margin-top: .6rem; }
 .date-switch { font-size: .88rem; }
 .link.danger { color: var(--danger); align-self: flex-start; }
 .hint.warn { color: var(--warn); }
+/* Schulferien */
+.cal-day.holiday { background: repeating-linear-gradient(135deg, var(--fill) 0 6px, transparent 6px 12px); }
+.cal-holiday { color: var(--muted); font-size: .72rem; }
+.holiday-list { list-style: none; margin: .4rem 0 0; padding: 0; font-size: .9rem; }
+.holiday-list li { display: flex; justify-content: space-between; padding: .3rem 0; border-top: .5px solid var(--border); }
+.holiday-list li:first-child { border-top: 0; }

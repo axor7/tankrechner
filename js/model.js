@@ -82,13 +82,16 @@ export function buildModel(shared, profiles = []) {
   for (const pr of profiles) if (pr.personId && pr.data?.days) profileDays.set(pr.personId, pr.data.days);
   const dirsAll = shared.roundTrip === false ? ['hin'] : DIRECTIONS;
 
+  const holiday = (date) => holidayOn(shared.holidays, date);
+
   /** Fährt Person pid an diesem Tag in diese Richtung mit? */
   function rides(pid, date, dir) {
     const day = days[date];
     if (day?.off) return false;
     const p = byId.get(pid);
     if (p?.archived && p.archivedFrom && date >= p.archivedFrom) return false; // entfernt: ab dann nie mehr dabei
-    let value = !!(p && planFor(p, date)[dir][weekdayIndex(date)]);
+    // In den Schulferien fährt nach Regelplan niemand – wer trotzdem fährt, trägt den Tag selbst ein (geht vor)
+    let value = !!(p && planFor(p, date)[dir][weekdayIndex(date)]) && !holiday(date);
     let at = -1;
     for (const e of [day?.people?.[pid], profileDays.get(pid)?.[date]]) {
       if (e && e[dir] !== undefined && (e.at || 0) >= at) { value = !!e[dir]; at = e.at || 0; }
@@ -130,7 +133,7 @@ export function buildModel(shared, profiles = []) {
     return dates.length ? dates.sort()[0] : null;
   }
 
-  return { persons, byId, rides, dayInfo, trip, startDate, dirs: dirsAll, shared };
+  return { persons, byId, rides, dayInfo, trip, startDate, holiday, dirs: dirsAll, shared };
 }
 
 // ---------- Woche: Werte & virtuelle Strecke ----------
@@ -171,6 +174,15 @@ const short = (label, fallback) => (label ? label.split(',')[0] : fallback);
  * Strecke einer Fahrt als calc.js-Snapshot: Fahrer-Adresse → Abholpunkte (in Reihenfolge) → Ziel.
  * Mitfahrer ohne Adresse steigen beim Fahrer zu. Ohne Fahrer-Adresse oder Ziel: manuelle Kilometer.
  */
+/**
+ * Schulferien an diesem Tag? → { start, end, name } oder null.
+ * Nur wenn eingeschaltet und erst ab dem Tag, an dem es eingeschaltet wurde (nicht rückwirkend).
+ */
+export function holidayOn(hol, date) {
+  if (!hol?.enabled || (hol.from && date < hol.from)) return null;
+  return (hol.periods || []).find((p) => p.start <= date && date <= p.end) || null;
+}
+
 /** Umleitungen, die an diesem Tag gefahren werden (von–bis, beide Tage eingeschlossen; Varianten mit use: false nicht). */
 export const activeDetours = (detours, date) => (detours || []).filter((d) => d?.lat != null && d.use !== false && (!d.from || d.from <= date) && (!d.until || date <= d.until));
 

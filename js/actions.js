@@ -214,7 +214,7 @@ export function weekPattern(pid, monday, mode) {
     const patch = {};
     for (const dir of m.dirs) {
       if (mode === 'none') patch[dir] = false;
-      else if (mode === 'plan') patch[dir] = !!plan[dir][k];
+      else if (mode === 'plan') patch[dir] = !!plan[dir][k] && !m.holiday(date); // in den Ferien: keine Fahrt
       else if (pid === state.defaultDriver) patch[dir] = k < 5 || !!plan[dir][k];
       // „ganze Woche“: an allen Tagen, an denen gefahren wird (Mo–Fr bzw. wenn der Fahrer fährt)
       else patch[dir] = (k < 5 && !m.dayInfo(date).off) || !!m.dayInfo(date).driver[dir];

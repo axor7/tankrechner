@@ -82,14 +82,17 @@ function dayCell(date, m) {
   const dirs = dirsNow();
   const people = m.persons.filter((p) => dirs.some((dir) => info.riders[dir]?.includes(p.id)));
   const noDriver = dirs.some((dir) => info.riders[dir]?.length && !info.driver[dir]);
+  const hol = m.holiday(date);
   return h('button', {
-    type: 'button', class: `cal-day ${date === t0 ? 'today' : ''} ${date < t0 ? 'past' : ''} ${info.off ? 'off' : ''}`,
+    type: 'button', class: `cal-day ${date === t0 ? 'today' : ''} ${date < t0 ? 'past' : ''} ${info.off ? 'off' : ''} ${hol ? 'holiday' : ''}`,
+    title: hol ? hol.name : null,
     'aria-label': `${fmtDate(date, { weekday: true, long: true })}: ${info.off ? 'frei' : people.map((p) => p.name).join(', ') || 'niemand'}`,
     onclick: () => openDay(date),
   },
     h('span', { class: 'cal-date' }, h('small', {}, WD[weekdayIndex(date)]), date.slice(8, 10)),
     info.off
       ? h('span', { class: 'cal-off' }, 'frei')
+      : hol && !people.length ? h('span', { class: 'cal-off cal-holiday' }, 'Ferien')
       : h('span', { class: 'cal-bars' }, people.map((p) => h('span', { class: 'cal-bar', style: { '--pc': p.color }, title: p.name },
         dirs.map((dir) => h('span', { class: `cal-half ${info.riders[dir]?.includes(p.id) ? 'on' : ''}` })),
       ))),
@@ -217,11 +220,12 @@ export function renderSheet() {
       h('button', { type: 'button', class: 'icon-btn tinted', 'aria-label': 'Schließen', onclick: () => d.close() }, icon('x', { size: 18 }))),
     past ? h('p', { class: 'hint warn small' }, 'Dieser Tag liegt in der Vergangenheit – Änderungen wirken sich auf die Abrechnung aus.') : null,
     info.off ? h('p', { class: 'callout' }, 'Freier Tag – an diesem Tag fährt niemand.') : null,
+    !info.off && m.holiday(date) ? h('p', { class: 'callout' }, `${m.holiday(date).name} – nach Regelplan fährt niemand. Wer trotzdem fährt, schaltet sich hier ein.`) : null,
 
     mine && personById(mine) ? h('section', { class: 'sheet-section' },
       h('h3', {}, 'Du fährst mit'),
       h('div', { class: 'list' }, dirs.map((dir) => h('div', { class: 'list-row' }, toggleRow(mine, dir, dir === 'hin' ? 'Hinfahrt' : 'Rückfahrt')))),
-      h('p', { class: 'hint small' }, `Laut Regelplan: ${dirs.map((dir) => `${dir === 'hin' ? 'Hin' : 'Zurück'} ${planFor(personById(mine), date)[dir][weekdayIndex(date)] ? 'ja' : 'nein'}`).join(' · ')}`),
+      h('p', { class: 'hint small' }, m.holiday(date) ? `Laut Regelplan: in den ${m.holiday(date).name} keine Fahrt` : `Laut Regelplan: ${dirs.map((dir) => `${dir === 'hin' ? 'Hin' : 'Zurück'} ${planFor(personById(mine), date)[dir][weekdayIndex(date)] ? 'ja' : 'nein'}`).join(' · ')}`),
     ) : null,
 
     h('section', { class: 'sheet-section' },

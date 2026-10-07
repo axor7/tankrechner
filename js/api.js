@@ -170,6 +170,14 @@ export async function optimizeOrder(points) {
   return pos.slice(1, -1).sort((a, b) => a.at - b.at).map((x) => x.i - 1);
 }
 
+/** Schulferien eines Bundeslands (OpenHolidays API) → [{ start, end, name }] (Daten als JJJJ-MM-TT, beide einschließlich). */
+export async function fetchSchoolHolidays(region, from, to) {
+  const params = new URLSearchParams({ countryIsoCode: 'DE', subdivisionCode: region, languageIsoCode: 'DE', validFrom: from, validTo: to });
+  const data = await getJSON(`https://openholidaysapi.org/SchoolHolidays?${params}`);
+  return data.map((x) => ({ start: x.startDate, end: x.endDate, name: x.name?.find((n) => n.language === 'DE')?.text || x.name?.[0]?.text || 'Ferien' }))
+    .sort((a, b) => a.start.localeCompare(b.start));
+}
+
 /** Tankstellen im Umkreis (max. 25 km). */
 export async function fetchStations(lat, lng, rad, apiKey) {
   const params = new URLSearchParams({ lat, lng, rad: Math.min(25, rad), sort: 'dist', type: 'all', apikey: apiKey });
