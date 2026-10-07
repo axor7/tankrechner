@@ -785,3 +785,12 @@ details.more > * + * { margin-top: .6rem; }
 .closure-ok { display: flex; align-items: center; gap: .35rem; color: var(--good-text, #248a3d); font-weight: 600; margin: .6rem 0 0; }
 .closure-card.ok { box-shadow: 0 0 0 1.5px var(--green) inset; }
 .closure-card.ok .closure-head, .closure-card.ok .closure-when { color: var(--muted); }
+/* Zeitraum einer Umleitung */
+.detour-edit { display: flex; flex-direction: column; gap: .5rem; margin-top: .6rem; cursor: default; }
+.date-range { display: flex; flex-direction: column; gap: .4rem; }
+.date-range .detour-dates { align-items: flex-end; }
+.date-range input[type=date] { width: 100%; }
+.date-open { display: flex; align-items: center; min-height: 2.6rem; color: var(--muted); font-size: .9rem; }
+.date-switch { font-size: .88rem; }
+.link.danger { color: var(--danger); align-self: flex-start; }
+.hint.warn { color: var(--warn); }

@@ -16,9 +16,9 @@ import { renderSettings } from './view-settings.js';
 import { loadExample } from './example.js';
 import { setupVersion } from './version.js';
 import { initAccount, inGroup, isAdmin, openAccount, claims } from './account.js';
-import { me, adminSet, setAddress, freezePastWeeks, moveDetour } from './actions.js';
+import { me, adminSet, setAddress, freezePastWeeks } from './actions.js';
 import { weeks as deriveRange, myBalance, toConfirm } from './derived.js';
-import { renderRouteView, openDetourForm, incidentPopup, detourPopup, shortPlace } from './view-route.js';
+import { renderRouteView, incidentPopup, detourPopup, shortPlace } from './view-route.js';
 
 const ALL_VIEWS = [
   { id: 'home', label: 'Übersicht', icon: 'house', color: 'blue' },
@@ -76,7 +76,7 @@ function fullStops(dir = 'hin', detours = activeDetours(state.detours, todayIso(
     seq = [stops[stops.length - 1], ...mid, ...pick.filter((st) => !mid.includes(st)).reverse(), { ...stops[0], label: `${driver.name} (Ende)` }];
   }
   return insertDetours(seq, detours, dir).map((st) => (st.via
-    ? { ...st, label: st.name, draggable: admin, popup: () => detourPopup(st.detour) }
+    ? { ...st, label: st.name, draggable: false, popup: () => detourPopup(st.detour) }
     : st));
 }
 
@@ -264,21 +264,6 @@ function focusIncident(it) {
   setTimeout(() => map.focusIncident(it), 120);
 }
 
-/** Ausweichrouten um eine gemeldete Sperrung suchen (Mitte des Abschnitts auf unserer Route). */
-function searchAroundIncident(it) {
-  map.closePopup();
-  findDetours(routeDir(), { coords: it.shown || it.coords, title: it.title });
-}
-
-/** Aus einer Sperrung heraus: Umleitung mit Grund und Enddatum vorbelegen. */
-function detourFromIncident(it) {
-  map.closePopup();
-  const st = it.times.end || it.times.overallEnd;
-  const until = st ? `${st.getFullYear()}-${String(st.getMonth() + 1).padStart(2, '0')}-${String(st.getDate()).padStart(2, '0')}` : '';
-  openDetourForm({ dir: routeDir(), note: `${it.road} ${it.title.replace(/^A\d+\s*\|\s*/, '')}`.trim(), until: until >= todayIso() ? until : '' });
-  toast('Tippe jetzt auf der Karte auf die Straße, über die ihr fahrt – oder such den Ort im Formular.');
-}
-
 // ---------- Teilstrecken für einzelne Fahrten nachladen ----------
 
 const inflight = new Set();
@@ -317,14 +302,12 @@ const ensureRoutes = debounce(async () => {
 
 const mapHandlers = {
   menuItems: () => (isAdmin()
-    ? [['closure', 'Hier ist gesperrt – Routen drumherum'], ['detour', 'Umleitung über diesen Punkt'], ['start', 'Start (Fahrer)'], ['end', 'Ziel']]
+    ? [['start', 'Start (Fahrer)'], ['end', 'Ziel']]
     : me() ? [['me', 'Meine Abholadresse']] : []),
   async onAddPoint(kind, latlng) {
-    if (kind === 'closure') { findDetours(routeDir(), { lat: latlng.lat, lng: latlng.lng }); return; }
     const label = await reverseGeocode(latlng.lat, latlng.lng);
     const addr = { label, lat: latlng.lat, lng: latlng.lng };
-    if (kind === 'detour') openDetourForm({ lat: addr.lat, lng: addr.lng, label, place: shortPlace(label) });
-    else if (kind === 'me') safe(() => setAddress(me(), addr));
+    if (kind === 'me') safe(() => setAddress(me(), addr));
     else if (kind === 'end') setDestination(addr);
     else safe(() => setAddress(state.defaultDriver, addr));
   },
@@ -332,7 +315,7 @@ const mapHandlers = {
     const label = await reverseGeocode(latlng.lat, latlng.lng);
     const addr = { label, lat: latlng.lat, lng: latlng.lng };
     if (id === 'dest') setDestination(addr);
-    else if (id.startsWith('via:')) safe(() => { moveDetour(id.slice(4), { ...addr, place: shortPlace(label) }); refreshRoute(); });
+    else if (id.startsWith('via:')) return; // Umleitungspunkte werden nicht verschoben
     else safe(() => setAddress(id.slice(2), addr));
   },
   onStopRemove() {},
@@ -362,7 +345,7 @@ function syncMap() {
   }
   const ik = [dir, traffic.key, traffic.at, isAdmin()].join('|');
   if (ik !== mapKeys.traffic) {
-    map.setIncidents(traffic[dir] || [], { popup: (it) => incidentPopup(it, { onDetour: isAdmin() ? detourFromIncident : null, onSearch: isAdmin() ? searchAroundIncident : null }) });
+    map.setIncidents(traffic[dir] || [], { popup: (it) => incidentPopup(it) });
     mapKeys.traffic = ik;
   }
   const sg = suggestions && suggestions.dir === dir ? suggestions : null;

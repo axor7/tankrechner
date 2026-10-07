@@ -11,7 +11,7 @@ Handy: Tab-Leiste unten · Tablet/Computer: Seitenleiste · Karte ein-/ausblendb
 
 **Admin** (wer die Fahrgemeinschaft erstellt; Admin-Rechte lassen sich teilen) – volle Kontrolle:
 - Ziel und Startadresse, **automatisch beste Abholreihenfolge** (Routenplaner), von Hand änderbar; Rückfahrt-Reihenfolge
-- **Umleitungen** eintragen (z. B. wegen einer Sperrung): Richtung, „über“ (Adresse oder auf der Karte tippen), Grund, gilt ab/bis – – oder automatisch: Führt eure Route durch eine gemeldete Sperrung, zeigt die Strecken-Ansicht oben einen roten Hinweis mit **„Ausweichrouten anzeigen“**. Die Umfahrungen rechnet der Routenplaner Valhalla (FOSSGIS) mit der Sperrung als verbotener Stelle; jede wird als komplette Fahrt nachgerechnet (genau diese km und Minuten zählen für die Kosten), Feldwege und Wendemanöver fallen raus. Antippen = diese Route fahren (ab heute). „Andere Routen anzeigen“ geht auch ohne Sperrung, und auf der Karte kann man selbst eine Stelle als gesperrt antippen.
+- **Sperrungen umfahren:** Führt eure Route durch eine gemeldete Sperrung, zeigt die Strecken-Ansicht oben einen roten Hinweis mit **„Ausweichrouten anzeigen“**. Die Umfahrungen rechnet Valhalla (FOSSGIS) mit der Sperrung als verbotener Stelle, jede wird als komplette Fahrt nachgerechnet (genau diese km und Minuten zählen für die Kosten). Antippen, Zeitraum wählen (**gilt ab** – auch rückwirkend – und **gilt bis**, vorbelegt mit dem Zeitraum der Meldung, oder **ohne Enddatum**) → „Diese Route fahren“. Zeitraum später änderbar, Umleitung löschbar, „Normale Strecke“ = ab heute wieder normal.
 - Auto, Spritpreis (live an der Strecke), Aufteilungsregel, Mitfahrer (auch ohne App); Entfernen wirkt erst ab heute, vergangene Fahrten bleiben in der Abrechnung
 - Jeden Tag bearbeiten: wer fährt, anderer Fahrer, freier Tag
 - **Ganze Woche auf einmal:** im Kalender auf die KW tippen → je Person „Regelplan / Ganze Woche / Gar nicht“
@@ -24,7 +24,7 @@ Handy: Tab-Leiste unten · Tablet/Computer: Seitenleiste · Karte ein-/ausblendb
 - **Übersicht:** eigene Kosten, direkter **PayPal-Knopf** mit dem offenen Betrag, Preis pro Fahrt, nächste Fahrten (Hin & Zurück zu einem Tag zusammengefasst)
 - **Fahrten:** eigener Regelplan; Farbkalender (jede Person eine Farbe, oben Hin / unten Zurück); Tag antippen → einzeln an-/absagen; KW antippen → ganze Woche
 - **Strecke:** Karte mit **Hin- und Rückfahrt** (umschaltbar), Abholreihenfolge, eigene Abholadresse ändern (auch auf der Karte)
-- **Sperrungen & Baustellen** auf der Strecke (Autobahnen, Daten der Autobahn GmbH): antippen zeigt, was gilt und wie lange noch; eingetragene Umleitungen sieht jeder
+- **Sperrungen & Baustellen** auf der Strecke (Autobahnen, Daten der Autobahn GmbH): antippen zeigt, was gilt und wie lange noch; die gewählte Umleitung sieht jeder
 - **Kosten:** offene Wochen, „Ich habe bezahlt“, „Wie berechnet?“ nur auf Wunsch, Prognose der eigenen Kosten für die kommenden Wochen
 - **Zahlung bestätigen:** Wer „Ich habe bezahlt“ meldet, wartet auf den Empfänger. Der sieht oben „Anna hat dir 24,32 € bezahlt – angekommen? Ja / Nein“. Erst nach „Ja“ gilt die Woche als bezahlt, bei „Nein“ ist sie wieder offen und der Zahler bekommt einen Hinweis. (Hat der Empfänger kein Konto, bestätigt ein Admin.)
 - Einstellung **Einfach / Detailliert** (Standard: einfach)
@@ -35,7 +35,7 @@ Handy: Tab-Leiste unten · Tablet/Computer: Seitenleiste · Karte ein-/ausblendb
 - Route je Fahrt: Start des Fahrers → Abholadressen der Mitfahrer dieses Tages (in Abholreihenfolge) → Ziel; wer nicht mitfährt, wird nicht angefahren
 - Jede Teilstrecke wird unter denen geteilt, die dort im Auto sitzen → man zahlt ab der eigenen Adresse
 - Jede Woche wird nur unter denen aufgeteilt, die in dieser Woche wirklich mitgefahren sind
-- Umleitungen sind ein zusätzlicher Wegpunkt dort, wo der Umweg am kleinsten ist; den Umweg zahlen die, die auf diesem Stück im Auto sitzen. Sie gelten nur von–bis und nur in ihrer Richtung; beendet wird ab heute
+- Umleitungen sind ein zusätzlicher Wegpunkt (mit Fahrtrichtung); den Umweg zahlen die, die auf diesem Stück im Auto sitzen. Sie gelten nur im gewählten Zeitraum und in ihrer Richtung – bewusst auch rückwirkend, dann werden die Fahrten dieser Tage neu berechnet
 - Nichts wirkt rückwirkend: Regelplan, Fahrerwechsel und Entfernen gelten ab heute; abgeschlossene Wochen werden mit ihren Werten (Preis, Verbrauch, Adressen, Aufteilungsregel) eingefroren; geplante Fahrten werden erst ab dem Tag fällig
 
 ## Fahrgemeinschaft mit Login
