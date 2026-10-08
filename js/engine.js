@@ -348,7 +348,9 @@ export const data = {
   },
   example() {
     if (inGroup() && !isAdmin()) return;
-    if (!confirm(inGroup() ? 'Beispieldaten laden? Das ersetzt die Daten der GANZEN Fahrgemeinschaft – für alle!' : 'Beispieldaten laden? Deine Daten auf diesem Gerät werden ersetzt.')) return;
+    // Nur nachfragen, wenn es etwas zu ersetzen gibt (beim allerersten Start nicht)
+    const hasData = inGroup() || state.setupDone || state.persons.length > 1 || state.persons.some((p) => p.address?.lat);
+    if (hasData && !confirm(inGroup() ? 'Beispieldaten laden? Das ersetzt die Daten der GANZEN Fahrgemeinschaft – für alle!' : 'Beispieldaten laden? Deine Daten auf diesem Gerät werden ersetzt.')) return;
     replaceState({ ...loadExample(), ui: { ...state.ui, screen: 'rides', welcomeDone: true } });
   },
   reset() {
