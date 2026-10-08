@@ -19,6 +19,7 @@ import { initAccount, inGroup, isAdmin, openAccount, claims } from './account.js
 import { me, adminSet, setAddress, freezePastWeeks } from './actions.js';
 import { weeks as deriveRange, myBalance, toConfirm } from './derived.js';
 import { renderRouteView, incidentPopup, detourPopup, shortPlace } from './view-route.js';
+import { singleMapData, setSinglePoint } from './view-single.js';
 
 const ALL_VIEWS = [
   { id: 'home', label: 'Übersicht', icon: 'house', color: 'blue' },
@@ -301,12 +302,13 @@ const ensureRoutes = debounce(async () => {
 // ---------- Karte ----------
 
 const mapHandlers = {
-  menuItems: () => (isAdmin()
-    ? [['start', 'Start (Fahrer)'], ['end', 'Ziel']]
-    : me() ? [['me', 'Meine Abholadresse']] : []),
+  menuItems: () => (singleActive() ? [['single-dest', 'Ziel der Einzelfahrt'], ['single-start', 'Start der Einzelfahrt']]
+    : isAdmin() ? [['start', 'Start (Fahrer)'], ['end', 'Ziel']]
+      : me() ? [['me', 'Meine Abholadresse']] : []),
   async onAddPoint(kind, latlng) {
     const label = await reverseGeocode(latlng.lat, latlng.lng);
     const addr = { label, lat: latlng.lat, lng: latlng.lng };
+    if (kind.startsWith('single-')) { setSinglePoint(kind === 'single-start' ? 'start' : 'dest', addr); return; }
     if (kind === 'me') safe(() => setAddress(me(), addr));
     else if (kind === 'end') setDestination(addr);
     else safe(() => setAddress(state.defaultDriver, addr));
@@ -314,6 +316,7 @@ const mapHandlers = {
   async onStopMoved(id, latlng) {
     const label = await reverseGeocode(latlng.lat, latlng.lng);
     const addr = { label, lat: latlng.lat, lng: latlng.lng };
+    if (id.startsWith('single:')) return;
     if (id === 'dest') setDestination(addr);
     else if (id.startsWith('via:')) return; // Umleitungspunkte werden nicht verschoben
     else safe(() => setAddress(id.slice(2), addr));
@@ -327,35 +330,44 @@ function setDestination(addr) {
 }
 
 let mapKeys = {};
+const singleActive = () => state.ui.tab === 'route' && state.ui.routeSub === 'single';
+
+/** Was die Karte gerade zeigt: Einzelfahrt oder unsere Strecke in der gewählten Richtung. */
+function mapView() {
+  if (singleActive()) return { mode: 'single', ...singleMapData() };
+  const dir = routeDir();
+  return { mode: dir, stops: fullStops(dir), route: displayRoute(dir) };
+}
+
 function syncMap() {
   const dir = routeDir();
-  const stops = fullStops(dir);
-  const route = displayRoute(dir);
-  const sk = JSON.stringify([dir, stops.map((s) => [s.id, s.lat, s.lng, s.label, s.draggable])]);
+  const { mode, stops, route } = mapView();
+  const single = mode === 'single';
+  const sk = JSON.stringify([mode, stops.map((s) => [s.id, s.lat, s.lng, s.label, s.draggable])]);
   if (sk !== mapKeys.stops) {
     map.setStops(stops);
     if (!mapKeys.fitted && stops.length) { setTimeout(() => map.fit(stops, route), 80); mapKeys.fitted = true; } // erstes Mal: auf die Strecke zoomen
     mapKeys.stops = sk;
   }
-  const rk = [dir, route?.key, route?.distance].join('|');
+  const rk = [mode, route?.key, route?.distance].join('|');
   if (rk !== mapKeys.route) {
     if (route && mapKeys.route !== undefined) map.fit(stops, route);
-    map.setRoute(route?.coords ? route : null, { color: ROUTE_COLORS[dir] });
+    map.setRoute(route?.coords ? route : null, { color: single ? '#2563eb' : ROUTE_COLORS[dir] });
     mapKeys.route = rk;
   }
-  const ik = [dir, traffic.key, traffic.at, isAdmin()].join('|');
+  const ik = [mode, traffic.key, traffic.at, isAdmin()].join('|');
   if (ik !== mapKeys.traffic) {
-    map.setIncidents(traffic[dir] || [], { popup: (it) => incidentPopup(it) });
+    map.setIncidents(single ? [] : traffic[dir] || [], { popup: (it) => incidentPopup(it) });
     mapKeys.traffic = ik;
   }
-  const sg = suggestions && suggestions.dir === dir ? suggestions : null;
+  const sg = !single && suggestions && suggestions.dir === dir ? suggestions : null;
   const gk = sg ? [dir, sg.loading, sg.list.length, JSON.stringify(sg.closure?.coords?.[0] || sg.closure?.lat || '')].join('|') : '';
   if (gk !== mapKeys.sugg) {
     map.setSuggestions(sg?.loading ? [] : sg?.list || [], sg?.closure || null);
     if (sg && !sg.loading && sg.list.length) { map.invalidate(); setTimeout(() => map.fitLines(sg.list.map((x) => x.coords)), 80); }
     mapKeys.sugg = gk;
   }
-  const back = state.roundTrip !== false && stops.length >= 2;
+  const back = !single && state.roundTrip !== false && stops.length >= 2;
   const dk = `${back}|${dir}`;
   if (dk !== mapKeys.dir) {
     map.setDirControl({ show: back, dir, onChange: setRouteDir });
@@ -372,7 +384,7 @@ function syncMap() {
 function toggleMap() {
   update((s) => { s.ui.showMap = !s.ui.showMap; });
   map.invalidate();
-  if (state.ui.showMap) setTimeout(() => map.fit(fullStops(routeDir()), displayRoute(routeDir())), 80);
+  if (state.ui.showMap) setTimeout(() => { const v = mapView(); map.fit(v.stops, v.route); }, 80);
 }
 
 // ---------- Navigation ----------
@@ -381,7 +393,7 @@ function go(view) {
   update((s) => { s.ui.tab = view; });
   window.scrollTo({ top: 0 });
   map.invalidate();
-  if (view === 'route') setTimeout(() => map.fit(fullStops(routeDir()), displayRoute(routeDir())), 120); // Karte wird auf dem Handy erst hier sichtbar
+  if (view === 'route') setTimeout(() => { const v = mapView(); map.fit(v.stops, v.route); }, 120); // Karte wird auf dem Handy erst hier sichtbar
 }
 
 function renderNav() {
@@ -451,7 +463,11 @@ function render() {
   if (view === 'costs') renderCosts(el, c);
   if (view === 'route') { renderRouteView(el, c); loadTraffic(); }
   if (view === 'settings') renderSettings(el, c);
-  if (focusedId) el.querySelector(`[data-focus-key="${focusedId}"]`)?.focus();
+  if (focusedId) {
+    const f = el.querySelector(`[data-focus-key="${focusedId}"]`);
+    f?.focus();
+    try { if (f?.type === 'text') f.setSelectionRange(f.value.length, f.value.length); } catch { /* egal */ }
+  }
   if ($('#day-dialog')?.open) renderSheet();
   syncMap();
   ensureRoutes();
@@ -526,7 +542,7 @@ function init() {
   requestRender();
   // Karte erst vermessen, wenn die Seite steht (startet die App direkt mit sichtbarer Karte)
   map.invalidate();
-  setTimeout(() => map.fit(fullStops(routeDir()), displayRoute(routeDir())), 120);
+  setTimeout(() => { const v = mapView(); map.fit(v.stops, v.route); }, 120);
   startAutoRefresh();
   window.addEventListener('resize', () => map.invalidate());
   window.addEventListener('scroll', () => document.body.classList.toggle('scrolled', window.scrollY > 8), { passive: true });

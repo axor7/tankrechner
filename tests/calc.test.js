@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { legCost, calcTrip, aggregate, settle, directedLegs, isoWeek, mondayOf, weekDates, addDays } from '../js/calc.js';
+import { legCost, calcTrip, aggregate, settle, directedLegs, isoWeek, mondayOf, weekDates, addDays, singleTripCost } from '../js/calc.js';
 import { bestWindow, profileFromObservations, TYPICAL_CURVE } from '../js/fueltimes.js';
 
 const snap = {
@@ -219,4 +219,25 @@ test('Auto: fehlende Route wird geschätzt und markiert', () => {
   assert.equal(r.estimated, true);
   assert.equal(r.legs.length, 2);
   assert.ok(r.legs.every((l) => l.km > 0));
+});
+
+test('Einzelfahrt: Verbrauch, Sprit, Nebenkosten, hin und zurück, pro Person', () => {
+  // 50 km, 6 l/100 km, 1,80 €/l, 8 ct/km Nebenkosten
+  let r = singleTripCost({ km: 50, minutes: 40, consumption: 6, price: 1.8, extraPerKm: 8 });
+  assert.equal(r.liters, 3);
+  assert.equal(Math.round(r.fuel * 100), 540);
+  assert.equal(Math.round(r.extra * 100), 400);
+  assert.equal(Math.round(r.total * 100), 940);
+  assert.equal(r.perPerson, r.total);
+  // hin und zurück, zu dritt
+  r = singleTripCost({ km: 50, minutes: 40, consumption: 6, price: 1.8, extraPerKm: 8, roundTrip: true, people: 3 });
+  assert.equal(r.km, 100);
+  assert.equal(r.minutes, 80);
+  assert.equal(Math.round(r.total * 100), 1880);
+  assert.equal(Math.round(r.perPerson * 100), 627);
+  // Nebenkosten ausgeschaltet
+  r = singleTripCost({ km: 50, consumption: 6, price: 1.8, extraPerKm: 8, includeExtra: false });
+  assert.equal(Math.round(r.total * 100), 540);
+  assert.equal(Math.round(r.extraExcluded * 100), 400);
+  assert.equal(singleTripCost({ km: 10, consumption: 5, price: 2, people: 0 }).people, 1);
 });

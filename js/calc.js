@@ -18,6 +18,24 @@ export function legCost(km, snap) {
   return { liters, fuel, extra, total: fuel + extra };
 }
 
+/**
+ * Einzelfahrt: Verbrauch und Kosten für eine Strecke.
+ * km/minutes: eine Richtung · roundTrip: Rückweg gleich lang · people: Kosten geteilt durch so viele Personen
+ * extraPerKm in Cent (Nebenkosten), includeExtra: Nebenkosten mitrechnen?
+ */
+export function singleTripCost({ km, minutes = 0, consumption, price, extraPerKm = 0, includeExtra = true, roundTrip = false, people = 1 }) {
+  const factor = roundTrip ? 2 : 1;
+  const dist = (Number(km) || 0) * factor;
+  const c = legCost(dist, { consumption, price, extraPerKm });
+  const extra = includeExtra ? c.extra : 0;
+  const total = c.fuel + extra;
+  const n = Math.max(1, Math.round(Number(people)) || 1);
+  return {
+    km: dist, minutes: (Number(minutes) || 0) * factor, liters: c.liters, fuel: c.fuel, extra, extraExcluded: includeExtra ? 0 : c.extra,
+    total, perPerson: total / n, perKm: dist ? total / dist : 0, people: n,
+  };
+}
+
 /** Teilstrecken in Fahrtrichtung. legIndex bezieht sich immer auf die Hin-Reihenfolge. */
 export function directedLegs(snapLegs, direction) {
   const legs = snapLegs.map((l, i) => ({ legIndex: i, from: l.from, to: l.to, km: l.km, min: l.min || 0 }));

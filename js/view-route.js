@@ -7,6 +7,7 @@ import { SOURCE, KIND_LABEL, isClosure, statusText, timeStatus, fmtWhen } from '
 import { usesClosure } from './detours.js';
 import { priceCard, timeCard, costCard } from './tab-fuel.js';
 import { addressInput } from './address.js';
+import { renderSingleTrip } from './view-single.js';
 import { h, fmtKm, fmtDuration, fmtDate, toast } from './ui.js';
 import { icon } from './icons.js';
 
@@ -440,15 +441,16 @@ function memberRouteView(el, c) {
 }
 
 export function renderRouteView(el, c) {
-  if (!isAdmin()) memberRouteView(el, c);
-  else {
-    const sub = state.ui.routeSub === 'fuel' ? 'fuel' : 'route';
-    el.append(h('div', { class: 'segmented' },
-      h('button', { type: 'button', class: sub === 'route' ? 'active' : '', onclick: () => update((s) => { s.ui.routeSub = 'route'; }) }, 'Route'),
-      h('button', { type: 'button', class: sub === 'fuel' ? 'active' : '', onclick: () => update((s) => { s.ui.routeSub = 'fuel'; }) }, 'Spritpreis & Tankzeit')));
-    if (sub === 'route') adminRouteView(el, c);
-    else el.append(...[priceCard(c.map), costCard(), timeCard()].filter(Boolean));
-  }
+  const admin = isAdmin();
+  const subs = admin ? [['route', 'Route'], ['fuel', 'Spritpreis'], ['single', 'Einzelfahrt']] : [['route', 'Unsere Strecke'], ['single', 'Einzelfahrt']];
+  const sub = subs.some(([k]) => k === state.ui.routeSub) ? state.ui.routeSub : 'route';
+  el.append(h('div', { class: 'segmented' }, subs.map(([k, label]) => h('button', {
+    type: 'button', class: sub === k ? 'active' : '', onclick: () => update((s) => { s.ui.routeSub = k; }),
+  }, label))));
+  if (sub === 'single') renderSingleTrip(el, c);
+  else if (!admin) memberRouteView(el, c);
+  else if (sub === 'route') adminRouteView(el, c);
+  else el.append(...[priceCard(c.map), costCard(), timeCard()].filter(Boolean));
   if (!state.ui.showMap) el.append(h('button', { type: 'button', class: 'btn', onclick: c.toggleMap }, icon('map', { size: 18 }), 'Karte einblenden'));
 }
 

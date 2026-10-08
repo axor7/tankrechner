@@ -26,6 +26,7 @@ Handy: Tab-Leiste unten · Tablet/Computer: Seitenleiste · Karte ein-/ausblendb
 - **Fahrten:** eigener Regelplan; Farbkalender (jede Person eine Farbe, oben Hin / unten Zurück); Tag antippen → einzeln an-/absagen; KW antippen → ganze Woche
 - **Strecke:** Karte mit **Hin- und Rückfahrt** (umschaltbar), Abholreihenfolge, eigene Abholadresse ändern (auch auf der Karte)
 - **Sperrungen & Baustellen** auf der Strecke (Autobahnen, Daten der Autobahn GmbH): antippen zeigt, was gilt und wie lange noch; die gewählte Umleitung sieht jeder
+- **Einzelfahrt berechnen** (Strecke → Einzelfahrt, auch von der Übersicht): Ziel eingeben oder auf der Karte antippen, optional Zwischenstopps, hin und zurück, Kosten teilen durch n Personen → Strecke, Fahrzeit, Verbrauch in Litern, Sprit, Nebenkosten, Gesamt und pro Person. Verbrauch/Preis lassen sich dafür anpassen; an der Abrechnung ändert sich nichts
 - **Kosten:** offene Wochen, „Ich habe bezahlt“, „Wie berechnet?“ nur auf Wunsch, Prognose der eigenen Kosten für die kommenden Wochen
 - **Zahlung bestätigen:** Wer „Ich habe bezahlt“ meldet, wartet auf den Empfänger. Der sieht oben „Anna hat dir 24,32 € bezahlt – angekommen? Ja / Nein“. Erst nach „Ja“ gilt die Woche als bezahlt, bei „Nein“ ist sie wieder offen und der Zahler bekommt einen Hinweis. (Hat der Empfänger kein Konto, bestätigt ein Admin.)
 - Einstellung **Einfach / Detailliert** (Standard: einfach)
@@ -88,7 +89,7 @@ Sperrungen auf Bundes-, Landes- und Kreisstraßen gibt es nicht als offene Echtz
 npm test
 ```
 
-Testet die Rechenlogik (Kosten, Teilstrecken-Aufteilung, Umleitungen, Ausgleichszahlungen, Kalenderwochen, Tankzeiten) und das Auslesen/Zuordnen der Verkehrsmeldungen.
+Testet die Rechenlogik (Kosten, Einzelfahrt, Teilstrecken-Aufteilung, Umleitungen, Ausgleichszahlungen, Kalenderwochen, Tankzeiten) und das Auslesen/Zuordnen der Verkehrsmeldungen.
 
 ## Aufbau
 
@@ -99,6 +100,7 @@ js/app.js           Start, Navigation je Rolle, Karte (Hin/Rück), Routen, Verke
 js/view-home.js     Übersicht, Willkommen, geführte Einrichtung
 js/view-trips.js    Regelplan, Farbkalender, Tag / ganze Woche bearbeiten
 js/view-route.js    Strecke: Hin-/Rückfahrt, Sperrungen & Baustellen, Umleitungen, Ziel/Start/Reihenfolge
+js/view-single.js   Einzelfahrt berechnen (Verbrauch, Kosten, pro Person)
 js/view-costs.js    Kosten (einfach/detailliert), bezahlen, Prognose
 js/view-settings.js Profil, Ansicht, Mitfahrer, Mitglieder & Rechte, Protokoll
 js/actions.js       Alle Änderungen: Rechte, Speicherort (Profil/gemeinsam), Protokoll

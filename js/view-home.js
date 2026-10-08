@@ -251,7 +251,11 @@ export function renderHome(el, ctx) {
   if (admin && !state.setupDone && !(state.destination && personById(state.defaultDriver)?.address)) return;
   const cc = confirmCard();
   if (cc) el.append(cc);
-  el.append(costHero(ctx, mine), tiles(ctx, mine), nextCard(ctx, mine));
+  el.append(costHero(ctx, mine), tiles(ctx, mine), nextCard(ctx, mine),
+    h('button', { type: 'button', class: 'list list-row has-sq', onclick: () => { update((s) => { s.ui.routeSub = 'single'; }); ctx.go('route'); } },
+      h('span', { class: 'sq sq-indigo' }, icon('navigation', { size: 16 })),
+      h('span', { class: 'grow' }, h('span', { class: 'title' }, 'Einzelfahrt berechnen'), h('span', { class: 'sub' }, 'Was kostet eine Fahrt – und wie viel Sprit braucht sie?')),
+      h('span', { class: 'chev' }, icon('chevron-right', { size: 18 }))));
   if (admin && !inGroup()) {
     el.append(h('button', { type: 'button', class: 'list list-row has-sq', onclick: () => ctx.openAccount(isLoggedIn() ? undefined : 'register') },
       h('span', { class: 'sq sq-blue' }, icon('users', { size: 16 })),
