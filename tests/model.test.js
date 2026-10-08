@@ -340,3 +340,103 @@ test('Schulferien: nach Regelplan keine Fahrt, eigener Eintrag geht vor, nicht r
   s.holidays.enabled = false;
   assert.ok(buildModel(s).rides('max', DI, 'hin'));
 });
+
+// ---------- Etappe 1: Rhythmus, Abwesenheit, fahrfreie Zeiten, mehrere Fahrer ----------
+
+import { planOn, weekInRhythm, absenceOn, freeOn, carFor, carsOf } from '../js/model.js';
+import { stopTimes, fmtTime } from '../js/calc.js';
+
+test('Rhythmus: jede 2. Woche, ausgewählte Wochen, nach Absprache', () => {
+  const every2 = { plan: withPlanVersion([], '2026-09-28', MOFR, MOFR, 1, { mode: 'weeks', every: 2 }) };
+  assert.equal(planOn(every2, '2026-09-29').hin[1], true);   // KW 40: dran (Startwoche)
+  assert.equal(planOn(every2, '2026-10-06').hin[1], false);  // KW 41: nicht dran
+  assert.equal(planOn(every2, '2026-10-13').hin[1], true);   // KW 42: wieder dran
+  const picked = { plan: withPlanVersion([], '2026-09-01', MOFR, MOFR, 1, { mode: 'weeks', weeks: ['2026-10-05', '2026-10-19'] }) };
+  assert.equal(planOn(picked, '2026-10-07').hin[2], true);
+  assert.equal(planOn(picked, '2026-10-14').hin[2], false);
+  const flex = { plan: withPlanVersion([], '2026-09-01', MOFR, MOFR, 1, { mode: 'flex' }) };
+  assert.equal(planOn(flex, '2026-10-07').hin[2], false);
+  assert.equal(weekInRhythm({ from: '2026-09-01' }, '2026-10-05'), true); // alte Pläne: immer
+  // Im Modell: Rhythmus „jede 2. Woche“ greift, einzelner Tag geht vor
+  const s = shared();
+  s.persons[1].plan = withPlanVersion([], '2026-09-28', MOFR, MOFR, 1, { mode: 'weeks', every: 2 });
+  let m = buildModel(s);
+  assert.equal(m.rides('anna', '2026-09-29', 'hin'), true);
+  assert.equal(m.rides('anna', '2026-10-06', 'hin'), false);
+  s.days['2026-10-06'] = { people: { anna: { hin: true, at: 5 } } };
+  m = buildModel(s);
+  assert.equal(m.rides('anna', '2026-10-06', 'hin'), true);
+});
+
+test('Abwesenheit: Urlaub schlägt den Plan, ein später eingetragener Tag schlägt den Urlaub', () => {
+  const s = shared();
+  const profiles = [{ userId: 'u1', personId: 'anna', data: { absences: [{ id: 'a1', from: MO, until: MI, reason: 'Urlaub', at: 10 }] } }];
+  let m = buildModel(s, profiles);
+  assert.equal(m.rides('anna', MO, 'hin'), false);
+  assert.equal(m.ridesWhy('anna', MO, 'hin').why, 'absent');
+  assert.equal(absenceOn(m.byId.get('anna'), '2026-10-01'), null);
+  // älterer Einzeltag zählt nicht, neuerer schon
+  s.days[MO] = { people: { anna: { hin: true, at: 5 } } };
+  assert.equal(buildModel(s, profiles).rides('anna', MO, 'hin'), false);
+  s.days[MO].people.anna.at = 20;
+  assert.equal(buildModel(s, profiles).rides('anna', MO, 'hin'), true);
+  // Abwesenheit vom Fahrer (gemeinsame Daten) → keine Fahrt, wenn niemand vertritt
+  s.days = {};
+  s.persons[0].absences = [{ id: 'x', from: DI, until: DI, reason: 'Urlaub', at: 3 }];
+  m = buildModel(s, profiles);
+  assert.equal(m.trip(DI, 'hin'), null);
+  assert.equal(m.dayInfo(DI).regular, 'max');
+});
+
+test('Vertretung: wer sich als Fahrer einträgt, fährt, wenn der normale Fahrer fehlt', () => {
+  const s = shared();
+  s.persons[0].absences = [{ id: 'x', from: MO, until: MO, at: 3 }];
+  const profiles = [{ userId: 'u1', personId: 'anna', data: { drive: { [MO]: { hin: true, rueck: true, at: 9 } } } }];
+  const m = buildModel(s, profiles);
+  assert.deepEqual(m.trip(MO, 'hin'), { driver: 'anna', legs: [['anna']] });
+  assert.equal(m.dayInfo(MO).substitute.hin, true);
+  // ist der normale Fahrer da, bleibt er Fahrer
+  assert.equal(buildModel(shared(), profiles).dayInfo(MO).driver.hin, 'max');
+});
+
+test('Fahrfreie Zeiten: Feiertag, eigener Zeitraum, Schulferien – jeweils erst ab dem Einschalten', () => {
+  const s = shared();
+  s.holidays = { enabled: true, from: '2026-09-01', periods: [{ start: '2026-10-12', end: '2026-10-24', name: 'Herbstferien' }],
+    public: { enabled: true, from: '2026-09-01', periods: [{ start: '2026-10-03', end: '2026-10-03', name: 'Tag der Deutschen Einheit' }] } };
+  s.offPeriods = [{ id: 'b', from: '2026-12-28', until: '2026-12-31', name: 'Betriebsferien' }];
+  assert.equal(freeOn(s, '2026-10-03').kind, 'public');
+  assert.equal(freeOn(s, '2026-10-13').kind, 'school');
+  assert.equal(freeOn(s, '2026-12-29').name, 'Betriebsferien');
+  assert.equal(freeOn(s, '2026-10-05'), null);
+  s.holidays.public.from = '2026-10-04';
+  assert.equal(freeOn(s, '2026-10-03'), null);
+  const m = buildModel(s);
+  assert.equal(m.rides('max', '2026-12-29', 'hin'), false);
+  assert.equal(m.ridesWhy('max', '2026-12-29', 'hin').why, 'free');
+});
+
+test('Fahrer-Plan: je Wochentag oder wochenweise abwechselnd', () => {
+  const s = shared();
+  s.drivers = [{ from: '2026-09-28', at: 1, mode: 'weekday', ids: ['max', 'anna', 'max', 'anna', 'max', null, null] }];
+  assert.equal(driverAt(s, MO), 'max');
+  assert.equal(driverAt(s, DI), 'anna');
+  assert.equal(driverAt(s, '2026-09-27'), 'max'); // vorher: Hauptfahrer
+  s.drivers = [{ from: '2026-09-28', at: 1, mode: 'rotate', ids: ['max', 'anna'], anchor: '2026-09-28' }];
+  assert.equal(driverAt(s, MI), 'max');
+  assert.equal(driverAt(s, '2026-10-07'), 'anna');
+  assert.equal(driverAt(s, '2026-10-14'), 'max');
+});
+
+test('Eigenes Auto je Fahrer: Verbrauch und Preis seines Kraftstoffs', () => {
+  const week = { consumption: 6, price: 1.7, extraPerKm: 8, fuel: 'e10', cars: carsOf([{ id: 'anna', car: { consumption: 5, fuel: 'diesel' } }, { id: 'ben', car: { consumption: 0 } }]), prices: { diesel: 1.6 } };
+  assert.deepEqual(carFor(week, 'max'), { consumption: 6, price: 1.7, extraPerKm: 8, fuel: 'e10' });
+  assert.deepEqual(carFor(week, 'anna'), { consumption: 5, price: 1.6, extraPerKm: 8, fuel: 'diesel' });
+  assert.equal(week.cars.ben, undefined);
+});
+
+test('Abholzeiten: rückwärts von der Ankunft, vorwärts ab der Abfahrt', () => {
+  const legs = [{ min: 5 }, { min: 7 }, { min: 33 }];
+  assert.deepEqual(stopTimes(legs, 'hin', { arrive: '07:25' }).map(fmtTime), ['06:38', '06:44', '06:52', '07:25']);
+  assert.deepEqual(stopTimes(legs, 'rueck', { leave: '15:15' }).map(fmtTime), ['15:15', '15:20', '15:28', '16:02']);
+  assert.equal(stopTimes(legs, 'hin', {}), null);
+});

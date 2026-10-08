@@ -1,17 +1,17 @@
-// Ansicht „Kosten“: einfach (offene Beträge, bezahlen) – auf Wunsch mit allen Details.
+// Ansicht „Geld“: Wer schuldet wem? Ein Betrag pro Person – bezahlen, bestätigen, abhaken, erinnern. Alle Zahlen auf Wunsch.
 import { state, update, personById, todayIso, liveSnap } from './state.js';
 import { aggregate, settle, addDays, isoWeek, mondayOf, toISODate, FUELS } from './calc.js';
 import { isAdmin, claims, inGroup } from './account.js';
 import { me, markPaid, confirmPayment, adminSet } from './actions.js';
-import { debtItems, entries, weekLabel, forecast, toConfirm, myRejected } from './derived.js';
+import { debtItems, entries, weekLabel, forecast, toConfirm, myRejected, payStates } from './derived.js';
 import { openByPair } from './debts.js';
 import { paymentMessage, paypalLink, paypalUser } from './pay.js';
-import { settingsUi } from './view-settings.js';
+import { register, openSheet, closeSheet, sheetHead } from './sheets.js';
+import { avatar, appTag, isPlaceholder } from './people.js';
 import { h, stat, fmtEuro, fmtKm, fmtL, fmtDate, fmtPrice, toast } from './ui.js';
 import { icon } from './icons.js';
 
 const nameOf = (id) => personById(id)?.name || 'Unbekannt';
-const deselected = new Set();
 const safe = (fn) => { try { fn(); } catch (e) { toast(e.message, 'error'); } };
 const copy = async (text, msg) => { try { await navigator.clipboard.writeText(text); toast(msg, 'ok'); } catch { prompt('Kopieren:', text); } };
 
@@ -65,81 +65,148 @@ export function confirmCard() {
   );
 }
 
-// ---------- Offene Beträge ----------
+// ---------- Offene Beträge: ein Betrag pro Person ----------
 
 const openDetails = new Set(); // aufgeklappte „Wie berechnet?“
+const VIA = { cash: 'bar', paypal: 'PayPal', bank: 'Überweisung' };
+const share = async (text, title) => {
+  if (navigator.share) { try { await navigator.share({ text, title }); return; } catch (e) { if (e?.name === 'AbortError') return; } }
+  copy(text, 'Text kopiert – jetzt z. B. in WhatsApp einfügen');
+};
+const msgItems = (pair) => pair.items.map((d) => ({ label: weekLabel(d.week), amount: d.open, details: d.paid > 0 ? `Rest, ${fmtEuro(d.paid)} schon bezahlt` : `${d.trips} Fahrten, ${fmtKm(d.km)}` }));
 
-function debtCard(pair, mine) {
+function weeksList(pair, pid) {
+  return h('ul', { class: 'debt-weeks' }, pair.items.map((d) => h('li', { class: d.pending ? 'is-pending' : '' },
+    h('div', { class: 'row between w-line' },
+      h('span', { class: 'w-label' }, weekLabel(d.week), h('small', {}, d.paid > 0 ? `${fmtEuro(d.paid)} schon bezahlt – Woche hat sich danach geändert` : `${d.trips} Fahrten · ${fmtKm(d.km)}`),
+        d.pending ? h('span', { class: 'pay-badge pending' }, icon('clock', { size: 12 }), `Gemeldet am ${dayOf(d.pending.at)} – wartet auf Bestätigung`) : null,
+        d.rejected ? h('span', { class: 'pay-badge rejected' }, icon('circle-alert', { size: 12 }), '„Nicht erhalten“ gemeldet') : null),
+      h('strong', {}, fmtEuro(d.open))),
+    h('button', { type: 'button', class: 'link small', onclick: () => { openDetails.has(d.key) ? openDetails.delete(d.key) : openDetails.add(d.key); update(() => {}); } },
+      openDetails.has(d.key) ? 'Berechnung ausblenden' : 'Wie berechnet?'),
+    openDetails.has(d.key) ? weekBreakdown(pid, d.week) : null)));
+}
+
+/** Ich schulde: bezahlen (PayPal) und melden. */
+function oweRow(pair) {
   const to = personById(pair.to);
   const pp = paypalUser(to?.paypal);
-  const iAmDebtor = pair.from === mine;
-  const selectable = (d) => !(iAmDebtor && d.pending); // gemeldet: der Zahler muss nichts mehr tun
-  const choice = pair.items.filter(selectable);
-  const selected = choice.filter((d) => !deselected.has(d.key));
-  const total = Math.round(selected.reduce((a, d) => a + d.open, 0) * 100) / 100;
-  const canMark = isAdmin() || pair.from === mine || pair.to === mine;
-  const msgItems = selected.map((d) => ({ label: weekLabel(d.week), amount: d.open, details: d.paid > 0 ? `Rest, ${fmtEuro(d.paid)} schon bezahlt` : `${d.trips} Fahrten, ${fmtKm(d.km)}` }));
-  return h('div', { class: `debt ${iAmDebtor || pair.to === mine ? 'mine' : ''}` },
-    h('div', { class: 'debt-head' },
-      h('span', { class: 'who', style: { color: personById(pair.from)?.color } }, iAmDebtor ? 'Du' : nameOf(pair.from)),
-      h('span', { class: 'arrow muted' }, '→'),
-      h('span', { class: 'who', style: { color: to?.color } }, pair.to === mine ? 'dich' : nameOf(pair.to)),
-      h('strong', {}, fmtEuro(pair.total))),
-    h('ul', { class: 'debt-weeks' }, pair.items.map((d) => h('li', { class: d.pending ? 'is-pending' : '' },
-      h('label', {},
-        choice.length > 1 && selectable(d) ? h('input', { type: 'checkbox', checked: !deselected.has(d.key), onchange: (e) => { if (e.target.checked) deselected.delete(d.key); else deselected.add(d.key); update(() => {}); } }) : null,
-        h('span', { class: 'w-label' }, weekLabel(d.week), h('small', {}, d.paid > 0 ? `${fmtEuro(d.paid)} schon bezahlt – Woche hat sich danach geändert` : `${d.trips} Fahrten · ${fmtKm(d.km)}`),
-          d.pending ? h('span', { class: 'pay-badge pending' }, icon('clock', { size: 12 }), `Gemeldet am ${dayOf(d.pending.at)} – wartet auf Bestätigung${pair.to === mine ? '' : ` von ${to?.name}`}`) : null,
-          d.rejected ? h('span', { class: 'pay-badge rejected' }, icon('circle-alert', { size: 12 }), `${pair.to === mine ? 'Du hast' : `${to?.name} hat`} „nicht erhalten“ gemeldet`) : null),
-        h('strong', {}, fmtEuro(d.open))),
-      h('button', {
-        type: 'button', class: 'link small', style: { padding: '0 .6rem .35rem' },
-        onclick: () => { const k = `${d.key}`; openDetails.has(k) ? openDetails.delete(k) : openDetails.add(k); update(() => {}); },
-      }, openDetails.has(d.key) ? 'Berechnung ausblenden' : 'Wie berechnet?'),
-      openDetails.has(d.key) ? weekBreakdown(pair.from, d.week) : null,
-    ))),
+  const due = pair.items.filter((d) => !d.pending);
+  const dueTotal = Math.round(due.reduce((a, d) => a + d.open, 0) * 100) / 100;
+  const open = openDetails.has(`pair:${pair.from}|${pair.to}`);
+  return h('div', { class: 'money-row' },
+    h('div', { class: 'money-head' },
+      avatar(pair.to, { size: 'md' }),
+      h('div', { class: 'grow' }, h('div', { class: 'title' }, 'An ', h('strong', {}, nameOf(pair.to))),
+        h('div', { class: 'muted small' }, pair.pendingTotal > 0 ? `${fmtEuro(pair.pendingTotal)} gemeldet – wartet auf ${to?.name}` : `${pair.items.length} ${pair.items.length === 1 ? 'Woche' : 'Wochen'}`)),
+      h('strong', { class: 'amount' }, fmtEuro(pair.total))),
     h('div', { class: 'pay-actions' },
-      iAmDebtor && pp && selected.length ? h('a', { class: 'btn btn-small btn-pp', href: paypalLink(pp, total), target: '_blank', rel: 'noopener' }, icon('wallet', { size: 15 }), `${fmtEuro(total)} mit PayPal zahlen`) : null,
-      iAmDebtor && !pp && choice.length ? h('span', { class: 'muted small' }, `${to?.name} hat noch kein PayPal hinterlegt.`) : null,
-      iAmDebtor && pair.pendingTotal > 0 ? h('button', {
-        type: 'button', class: 'btn btn-small',
-        onclick: () => safe(() => { markPaid(pair.items.filter((d) => d.pending), false); toast('Meldung zurückgenommen'); }),
-      }, icon('rotate-ccw', { size: 15 }), 'Meldung zurücknehmen') : null,
-      !iAmDebtor ? h('button', { type: 'button', class: 'btn btn-small', disabled: !selected.length, onclick: () => copy(paymentMessage({ fromName: nameOf(pair.from), toName: nameOf(pair.to), items: msgItems, paypal: pp }), 'Nachricht kopiert – jetzt z. B. in WhatsApp einfügen') }, icon('copy', { size: 15 }), 'Nachricht kopieren') : null,
-      !iAmDebtor && pp ? h('button', { type: 'button', class: 'btn btn-small btn-pp', disabled: !selected.length, onclick: () => copy(paypalLink(pp, total), 'PayPal-Link kopiert') }, icon('link', { size: 15 }), 'PayPal-Link') : null,
-      canMark && choice.length ? h('button', {
-        type: 'button', class: 'btn btn-small btn-paid', disabled: !selected.length,
-        onclick: () => safe(() => {
-          for (const d of pair.items) deselected.delete(d.key);
-          const waits = markPaid(selected, true);
-          toast(waits ? `Gemeldet – ${to?.name || 'der Empfänger'} muss den Eingang noch bestätigen` : `${fmtEuro(total)} als bezahlt markiert`, 'ok');
-        }),
-      }, icon('check', { size: 15 }), iAmDebtor ? 'Ich habe bezahlt' : 'Als bezahlt markieren') : null,
-    ),
-    pair.to === mine && !pp ? h('button', { type: 'button', class: 'link small', onclick: () => { settingsUi.focus = 'paypal'; update((s) => { s.ui.tab = 'settings'; }); } }, 'PayPal hinterlegen, damit man dir direkt zahlen kann') : null,
-  );
+      pp && dueTotal > 0 ? h('a', { class: 'btn btn-small btn-pp', href: paypalLink(pp, dueTotal), target: '_blank', rel: 'noopener' }, icon('wallet', { size: 15 }), `${fmtEuro(dueTotal)} mit PayPal`) : null,
+      due.length ? h('button', { type: 'button', class: 'btn btn-small btn-paid', onclick: () => openSheet('pay', { from: pair.from, to: pair.to, role: 'payer' }) }, icon('check', { size: 15 }), 'Ich habe bezahlt') : null,
+      pair.pendingTotal > 0 ? h('button', { type: 'button', class: 'btn btn-small', onclick: () => safe(() => { markPaid(pair.items.filter((d) => d.pending), false); toast('Meldung zurückgenommen'); }) }, icon('rotate-ccw', { size: 15 }), 'Zurücknehmen') : null,
+      h('button', { type: 'button', class: 'link small', onclick: () => { open ? openDetails.delete(`pair:${pair.from}|${pair.to}`) : openDetails.add(`pair:${pair.from}|${pair.to}`); update(() => {}); } }, open ? 'Weniger' : 'Wochen')),
+    !pp && dueTotal > 0 ? h('p', { class: 'hint small' }, `${to?.name} hat kein PayPal hinterlegt – bar oder per Überweisung zahlen und dann „Ich habe bezahlt“.`) : null,
+    open ? weeksList(pair, pair.from) : null);
+}
+
+/** Jemand schuldet mir (oder – als Admin – jemand anderem): abhaken, erinnern. */
+function getRow(pair, mine) {
+  const toMe = pair.to === mine;
+  const open = openDetails.has(`pair:${pair.from}|${pair.to}`);
+  const due = pair.items.filter((d) => !d.pending);
+  return h('div', { class: 'money-row' },
+    h('div', { class: 'money-head' },
+      avatar(pair.from, { size: 'md' }),
+      h('div', { class: 'grow' },
+        h('div', { class: 'title' }, h('strong', {}, nameOf(pair.from)), toMe ? '' : h('span', { class: 'muted' }, ` → ${nameOf(pair.to)}`), ' ', appTag(pair.from)),
+        h('div', { class: 'muted small' }, pair.pendingTotal > 0 ? `${fmtEuro(pair.pendingTotal)} als bezahlt gemeldet` : `${pair.items.length} ${pair.items.length === 1 ? 'Woche' : 'Wochen'} offen`)),
+      h('strong', { class: 'amount' }, fmtEuro(pair.total))),
+    h('div', { class: 'pay-actions' },
+      due.length ? h('button', { type: 'button', class: 'btn btn-small btn-paid', onclick: () => openSheet('pay', { from: pair.from, to: pair.to, role: 'receiver' }) }, icon('check', { size: 15 }), 'Abhaken') : null,
+      due.length ? h('button', { type: 'button', class: 'btn btn-small', onclick: () => openSheet('remind', { from: pair.from, to: pair.to }) }, icon('message-circle', { size: 15 }), 'Erinnern') : null,
+      h('button', { type: 'button', class: 'link small', onclick: () => { open ? openDetails.delete(`pair:${pair.from}|${pair.to}`) : openDetails.add(`pair:${pair.from}|${pair.to}`); update(() => {}); } }, open ? 'Weniger' : 'Wochen')),
+    open ? weeksList(pair, pair.from) : null);
+}
+
+const pairOf = (from, to) => openByPair(debtItems()).find((p) => p.from === from && p.to === to);
+
+// Abhaken bzw. „Ich habe bezahlt“: mit Zahlungsart
+const payDraft = { via: 'cash' };
+register('pay', ({ from, to, role }) => {
+  const pair = pairOf(from, to);
+  if (!pair) return null;
+  const items = pair.items.filter((d) => !d.pending);
+  const total = Math.round(items.reduce((a, d) => a + d.open, 0) * 100) / 100;
+  const payer = role === 'payer';
+  return [
+    sheetHead(payer ? `${fmtEuro(total)} an ${nameOf(to)}` : `${fmtEuro(total)} von ${nameOf(from)}`, kwList(items)),
+    h('div', { class: 'list' }, Object.entries(VIA).map(([k, label]) => h('button', {
+      type: 'button', class: `list-row radio-row ${payDraft.via === k ? 'on' : ''}`, onclick: () => { payDraft.via = k; update(() => {}); },
+    }, h('span', { class: 'radio' }), h('span', { class: 'grow' }, label)))),
+    h('button', {
+      type: 'button', class: 'btn btn-primary full',
+      onclick: () => safe(() => {
+        const waits = markPaid(items, true, payDraft.via);
+        toast(waits ? `Gemeldet – ${nameOf(to)} bestätigt noch den Eingang` : `${fmtEuro(total)} abgehakt`, 'ok');
+        closeSheet();
+      }),
+    }, icon('check', { size: 17 }), payer ? 'Ich habe bezahlt' : 'Als bezahlt abhaken'),
+    h('p', { class: 'hint small' }, payer
+      ? `${nameOf(to)} bekommt eine Nachfrage „Angekommen?“ und bestätigt mit einem Tipp.`
+      : isPlaceholder(from) ? `${nameOf(from)} hat die App nicht – deshalb hakst du selbst ab.` : `Zum Beispiel, wenn ${nameOf(from)} bar bezahlt hat.`),
+  ];
+});
+
+// Erinnern: fertiger Text mit Betrag und PayPal-Link zum Teilen (WhatsApp …)
+register('remind', ({ from, to }) => {
+  const pair = pairOf(from, to);
+  if (!pair) return null;
+  const items = pair.items.filter((d) => !d.pending);
+  const pp = paypalUser(personById(to)?.paypal);
+  const text = paymentMessage({ fromName: nameOf(from), toName: nameOf(to), items: msgItems({ ...pair, items }), paypal: pp });
+  return [
+    sheetHead(`${nameOf(from)} erinnern`, isPlaceholder(from) ? `${nameOf(from)} hat die App nicht – du schickst den Text selbst` : 'Fertiger Text mit Betrag und Link'),
+    h('pre', { class: 'bubble' }, text),
+    h('div', { class: 'row gap wrap' },
+      h('a', { class: 'btn btn-primary', href: `https://wa.me/?text=${encodeURIComponent(text)}`, target: '_blank', rel: 'noopener' }, icon('message-circle', { size: 16 }), 'WhatsApp'),
+      h('button', { type: 'button', class: 'btn', onclick: () => share(text, 'Tankkosten') }, icon('share', { size: 16 }), 'Teilen'),
+      h('button', { type: 'button', class: 'btn', onclick: () => copy(text, 'Text kopiert') }, icon('copy', { size: 16 }), 'Kopieren')),
+    !pp && to === me() ? h('button', { type: 'button', class: 'link small', onclick: () => { closeSheet(); update((s) => { s.ui.tab = 'settings'; }); } }, 'PayPal hinterlegen, damit der Text einen Bezahl-Link enthält') : null,
+  ];
+});
+
+function balanceHead(mine) {
+  const pairs = openByPair(debtItems());
+  const owe = pairs.filter((p) => p.from === mine).reduce((a, p) => a + p.total, 0);
+  const get = pairs.filter((p) => p.to === mine).reduce((a, p) => a + p.total, 0);
+  if (owe < 0.005 && get < 0.005) return h('section', { class: 'card money-ok' }, h('span', { class: 'sq sq-green' }, icon('check', { size: 16 })), h('div', { class: 'grow' }, h('strong', {}, 'Alles bezahlt'), h('div', { class: 'muted small' }, 'Nichts offen.')));
+  return h('div', { class: 'balance' },
+    get > 0.004 ? h('div', { class: 'bal get' }, h('span', {}, 'Du bekommst'), h('strong', {}, fmtEuro(get))) : null,
+    owe > 0.004 ? h('div', { class: 'bal owe' }, h('span', {}, 'Du zahlst'), h('strong', {}, fmtEuro(owe))) : null);
 }
 
 function openCard(mine) {
   const items = debtItems();
-  let pairs = openByPair(items);
+  const pairs = openByPair(items);
   const admin = isAdmin();
-  if (!admin) pairs = pairs.filter((p) => p.from === mine || p.to === mine);
-  pairs.sort((a, b) => Number(b.from === mine || b.to === mine) - Number(a.from === mine || a.to === mine));
+  const owe = pairs.filter((p) => p.from === mine);
+  const get = pairs.filter((p) => p.to === mine);
+  const others = admin ? pairs.filter((p) => p.from !== mine && p.to !== mine) : [];
   const paid = items.filter((d) => d.open <= 0 && d.paid > 0 && (admin || d.from === mine || d.to === mine)).sort((a, b) => b.week.localeCompare(a.week));
-  return h('section', { class: 'card' },
-    h('h2', {}, admin ? 'Offene Beträge' : 'Deine offenen Beträge'),
-    pairs.length ? pairs.map((p) => debtCard(p, mine)) : h('p', { class: 'callout good' }, 'Alles bezahlt – nichts offen.'),
+  const st = payStates();
+  return [
+    balanceHead(mine),
+    owe.length ? h('div', { class: 'section' }, h('div', { class: 'section-title' }, 'Du zahlst'), h('div', { class: 'list money-list' }, owe.map(oweRow))) : null,
+    get.length ? h('div', { class: 'section' }, h('div', { class: 'section-title' }, 'Du bekommst'), h('div', { class: 'list money-list' }, get.map((p) => getRow(p, mine)))) : null,
+    others.length ? h('div', { class: 'section' }, h('div', { class: 'section-title' }, 'Zwischen den anderen'), h('div', { class: 'list money-list' }, others.map((p) => getRow(p, mine)))) : null,
     paid.length ? h('details', { class: 'more' },
-      h('summary', {}, `Bereits bezahlt (${paid.length})`),
-      h('ul', { class: 'paid-list' }, paid.map((d) => h('li', {},
-        h('span', {}, `${d.from === mine ? 'Du' : nameOf(d.from)} → ${nameOf(d.to)} · ${weekLabel(d.week)}`),
-        h('span', { class: 'muted' }, `${fmtEuro(d.paid)}${d.paidAt ? ` am ${new Date(d.paidAt).toLocaleDateString('de-DE')}` : ''}`),
-        (admin || d.to === mine) ? h('button', { type: 'button', class: 'link', onclick: () => safe(() => markPaid([d], false)) }, 'zurücknehmen') : null,
-      ))),
-    ) : null,
-    h('p', { class: 'hint small' }, 'Geplante Fahrten werden erst ab dem Tag der Fahrt fällig.'),
-  );
+      h('summary', {}, `Verlauf (${paid.length})`),
+      h('ul', { class: 'paid-list' }, paid.slice(0, 40).map((d) => h('li', {},
+        h('span', {}, `${d.from === mine ? 'Du' : nameOf(d.from)} → ${d.to === mine ? 'dich' : nameOf(d.to)} · ${weekLabel(d.week)}`),
+        h('span', { class: 'muted' }, `${fmtEuro(d.paid)}${st[d.key]?.via ? ` · ${VIA[st[d.key].via] || st[d.key].via}` : ''}${d.paidAt ? ` · ${new Date(d.paidAt).toLocaleDateString('de-DE')}` : ''}`),
+        (admin || d.to === mine) ? h('button', { type: 'button', class: 'link', onclick: () => safe(() => markPaid([d], false)) }, 'zurücknehmen') : null)))) : null,
+    h('p', { class: 'hint small' }, 'Abgerechnet wird wochenweise. Geplante Fahrten werden erst ab dem Tag der Fahrt fällig.'),
+  ];
 }
 
 // ---------- Details (Einstellung „Detailliert“) ----------
@@ -280,8 +347,8 @@ function forecastCard(mine) {
       ].join('')));
   });
   const sum = admin ? list.reduce((a, w) => a + w.total, 0) : list.reduce((a, w) => a + (w.persons[mine]?.share || 0), 0);
-  return h('section', { class: 'card' },
-    h('div', { class: 'row between' }, h('h2', {}, 'Prognose'), h('span', { class: 'muted small' }, `${list.length} Wochen ${admin ? 'gesamt ' : ''}≈ ${fmtEuro(sum)}`)),
+  return h('details', { class: 'card forecast', open: !!state.ui.fcOpen, ontoggle: (e) => { state.ui.fcOpen = e.target.open; } },
+    h('summary', { class: 'row between' }, h('h2', {}, 'Prognose'), h('span', { class: 'muted small' }, `nächste ${list.length} Wochen ${admin ? 'gesamt ' : ''}≈ ${fmtEuro(sum)}`)),
     h('p', { class: 'hint small' }, admin
       ? 'So teuer werden die kommenden Wochen, wenn alle wie eingeplant mitfahren (Regelplan + geänderte Tage). Pro Person nur, wer in der Woche wirklich mitfährt.'
       : 'So viel kosten dich die kommenden Wochen, wenn du wie eingeplant mitfährst.'),
@@ -316,8 +383,10 @@ export function renderCosts(el) {
   const mine = me();
   const cc = confirmCard();
   if (cc) el.append(cc);
-  el.append(openCard(mine));
+  el.append(...openCard(mine).filter(Boolean));
   el.append(forecastCard(mine));
-  if (state.ui.detail === 'detailed') detailed(el);
-  else el.append(h('button', { type: 'button', class: 'btn', style: { alignSelf: 'center' }, onclick: () => update((s) => { s.ui.detail = 'detailed'; }) }, icon('list-checks', { size: 17 }), 'Alle Details anzeigen'));
+  if (state.ui.detail === 'detailed') {
+    el.append(h('button', { type: 'button', class: 'btn', style: { alignSelf: 'center' }, onclick: () => update((s) => { s.ui.detail = 'simple'; }) }, 'Alle Zahlen ausblenden'));
+    detailed(el);
+  } else el.append(h('button', { type: 'button', class: 'btn', style: { alignSelf: 'center' }, onclick: () => update((s) => { s.ui.detail = 'detailed'; }) }, icon('list-checks', { size: 17 }), 'Alle Zahlen anzeigen'));
 }

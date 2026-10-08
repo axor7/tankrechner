@@ -21,7 +21,8 @@ let memberList = [];
 let authMode = 'login';
 let error = '';
 let busy = false;
-let pendingJoin = null;
+let pendingJoin = null;      // { code, pid } – Einladung (pid: persönlicher Link für einen Platz)
+let claimOffer = null;       // Person aus dem persönlichen Link, die nach dem Beitreten bestätigt werden soll
 let recovering = false;       // über den Link aus der „Passwort vergessen“-Mail gekommen
 let changingPassword = false;
 let resetSent = '';
@@ -38,6 +39,7 @@ const sync = createSync({
 // ---------- Für andere Module ----------
 
 export const inGroup = () => !!(user && meta.groupId);
+export const syncState = () => syncStatus;
 export const isAdmin = () => !inGroup() || meta.role === 'admin';
 export const myPersonId = () => (inGroup() ? meta.personId || null : null);
 export const myName = () => cloud.userName(user);
@@ -45,13 +47,44 @@ export const isLoggedIn = () => !!user;
 export const groupName = () => (inGroup() ? meta.groupName : null);
 export const members = () => memberList;
 export const myUserId = () => user?.id || null;
-export const inviteLink = () => (info?.invite_code ? `${location.origin}${location.pathname}#join=${info.invite_code}` : '');
+/** Einladungslink für die Gruppe – mit pid ein persönlicher Link für genau diesen Platz. */
+export const inviteLink = (pid) => (info?.invite_code ? `${location.origin}${location.pathname}#join=${info.invite_code}${pid ? `&p=${encodeURIComponent(pid)}` : ''}` : '');
+/** Code zum Abtippen: „K7M-4Q2“ (alte, lange Codes in Vierergruppen). */
+export function inviteCode() {
+  const c = String(info?.invite_code || '').toUpperCase();
+  if (!c) return '';
+  return c.length <= 6 ? `${c.slice(0, 3)}-${c.slice(3)}` : c.match(/.{1,4}/g).join('-');
+}
+export const groupCreator = () => info?.created_by || null;
+export const pendingClaim = () => claimOffer;
+export const clearClaimOffer = () => { claimOffer = null; try { sessionStorage.removeItem('tankrechner:claim'); } catch { /* egal */ } };
 
 /** Wer hat welche Person beansprucht? Map personId → { name, me, role, userId } */
 export function claims() {
   const m = new Map();
   if (inGroup()) for (const x of memberList) if (x.person_id) m.set(x.person_id, { name: x.display_name || 'Jemand', me: x.user_id === user?.id, role: x.role, userId: x.user_id });
   return m;
+}
+
+// ---------- Neue Übernahmen (für Admins) ----------
+
+const seenKey = () => `tankrechner:seen-claims:${meta.groupId}`;
+
+/** Wer hat seit dem letzten Mal einen Platz übernommen oder ist neu dazugekommen? → [{ userId, personId, name, self }] */
+export function newClaims() {
+  if (!inGroup() || !isAdmin()) return [];
+  const seen = load(seenKey(), null);
+  const list = memberList.filter((m) => m.person_id && m.user_id !== user?.id);
+  if (!seen) { store(seenKey(), list.map((m) => `${m.user_id}:${m.person_id}`)); return []; } // erstes Mal: nichts melden
+  return list.filter((m) => !seen.includes(`${m.user_id}:${m.person_id}`))
+    .map((m) => ({ userId: m.user_id, personId: m.person_id, name: m.display_name || 'Jemand', self: String(m.person_id).startsWith('u:') }));
+}
+
+export function ackClaim(userId) {
+  const seen = load(seenKey(), []);
+  const m = memberList.find((x) => x.user_id === userId);
+  if (m) store(seenKey(), [...seen, `${m.user_id}:${m.person_id}`]);
+  document.dispatchEvent(new CustomEvent('account-changed'));
 }
 
 // ---------- Eigenes Profil (Mitfahrer) ----------
@@ -144,7 +177,8 @@ export async function claimPerson(personId) {
   await cloud.setMyPerson(meta.groupId, personId);
   meta.personId = personId;
   store(META_KEY, meta);
-  log(`hat sich als „${personById(personId)?.name || '?'}“ eingetragen`);
+  clearClaimOffer();
+  log(`hat den Platz „${personById(personId)?.name || '?'}“ übernommen`);
   await reloadProfiles();
 }
 
@@ -210,13 +244,10 @@ async function refreshGroupDetails() {
 
 function renderButton(notify = true) {
   const title = { synced: 'Gespeichert', saving: 'Wird gespeichert …', offline: 'Offline – wird später gespeichert' }[syncStatus];
-  for (const btn of [document.getElementById('btn-account'), document.getElementById('btn-account-mobile')]) {
-    if (!btn) continue;
-    btn.replaceChildren(...(inGroup()
-      ? [h('span', { class: `acc-status ${syncStatus}`, title }), h('span', { class: 'acc-label' }, meta.groupName || 'Fahrgemeinschaft')]
-      : [icon(user ? 'circle-user' : 'user', { size: 18 }), h('span', { class: 'acc-label' }, user ? cloud.userName(user) : 'Anmelden')]));
-    btn.classList.toggle('in-group', inGroup());
-    btn.title = inGroup() ? `${meta.groupName} – ${title}` : 'Konto & Fahrgemeinschaft';
+  // Speicherstand am Profilbild (oben rechts / Seitenleiste)
+  for (const dot of document.querySelectorAll('#btn-profile .acc-status, #btn-profile-side .acc-status')) {
+    dot.className = `acc-status ${syncStatus}`;
+    dot.title = title;
   }
   // Übrige Ansicht aktualisieren – nicht bei reinen Speicherstatus-Wechseln (sonst verliert man beim Tippen den Fokus)
   if (notify) document.dispatchEvent(new CustomEvent('account-changed'));
@@ -331,11 +362,20 @@ function authView() {
   );
 }
 
-async function doJoin(code) {
+async function doJoin(join) {
+  const { code: raw, pid } = typeof join === 'string' ? { code: join, pid: null } : join;
+  // Alte Codes (12 Zeichen, hexadezimal) sind kleingeschrieben gespeichert, neue (6 Zeichen) groß
+  const code = /^[0-9a-f]{12}$/i.test(raw) ? raw.toLowerCase() : raw.toUpperCase();
   const g = await cloud.joinGroup(code, cloud.userName(user));
   pendingJoin = null;
   try { sessionStorage.removeItem('tankrechner:join'); } catch { /* egal */ }
-  await activate(g.id, g.name, null, 'member');
+  const mine = groups.find((x) => x.id === g.id);
+  await activate(g.id, g.name, mine?.personId || null, mine?.role || 'member');
+  // Persönlicher Link: nach dem Beitreten fragen „Bist du Max?“ (nur wenn der Platz noch frei ist)
+  if (pid && !meta.personId && !claims().has(pid)) {
+    claimOffer = pid;
+    try { sessionStorage.setItem('tankrechner:claim', pid); } catch { /* egal */ }
+  }
   log('ist der Fahrgemeinschaft beigetreten');
   update((s) => { s.ui.tab = 'home'; s.ui.welcomeDone = true; });
   toast(`Willkommen in „${g.name}“!`, 'ok');
@@ -410,9 +450,9 @@ function groupsView() {
       h('h3', {}, 'Mit Einladung beitreten'),
       h('form', {
         class: 'acc-form row gap',
-        onsubmit: (e) => { e.preventDefault(); act(async () => { await doJoin(parseJoin(code) || code.trim()); dialog().close(); }); },
+        onsubmit: (e) => { e.preventDefault(); act(async () => { const j = parseJoin(code); if (!j) throw new Error('Das ist kein gültiger Code oder Link.'); await doJoin(j); dialog().close(); }); },
       },
-        h('input', { type: 'text', required: true, placeholder: 'Einladungslink oder Code', oninput: (e) => { code = e.target.value; } }),
+        h('input', { type: 'text', required: true, placeholder: 'Code (z. B. K7M-4Q2) oder Link', autocapitalize: 'characters', oninput: (e) => { code = e.target.value; } }),
         h('button', { type: 'submit', class: 'btn', disabled: busy }, 'Beitreten'),
       ),
     ),
@@ -448,9 +488,13 @@ function renderDialog() {
 
 // ---------- Einladungslink ----------
 
-function parseJoin(text) {
-  const m = String(text || '').match(/#join=([A-Za-z0-9]+)/) || String(text || '').match(/^\s*([a-f0-9]{12})\s*$/i);
-  return m ? m[1] : null;
+/** Einladung aus Link oder Code lesen → { code, pid } oder null. Codes: 6 Zeichen (neu) oder 12 (alt), Bindestriche/Leerzeichen egal. */
+export function parseJoin(text) {
+  const t = String(text || '');
+  const link = t.match(/#join=([A-Za-z0-9-]+)(?:&p=([^&\s]+))?/);
+  if (link) return { code: link[1].replace(/-/g, ''), pid: link[2] ? decodeURIComponent(link[2]) : null };
+  const raw = t.replace(/[\s-]/g, '');
+  return /^[A-Za-z0-9]{6,12}$/.test(raw) ? { code: raw, pid: null } : null;
 }
 
 export const hasPendingJoin = () => !!pendingJoin;
@@ -458,22 +502,23 @@ export const hasPendingJoin = () => !!pendingJoin;
 // ---------- Start ----------
 
 export async function initAccount() {
-  document.getElementById('btn-account').onclick = () => openAccount();
-  const mobileBtn = document.getElementById('btn-account-mobile');
-  if (mobileBtn) mobileBtn.onclick = () => openAccount();
   // Link aus der „Passwort vergessen“-Mail?
   let recovery = null;
   if (/access_token=|error_description=|error_code=/.test(location.hash)) {
     try { recovery = await cloud.handleAuthRedirect(location.hash); } catch (e) { recovery = { error: e.message }; }
     history.replaceState(null, '', location.pathname + location.search);
   }
-  const code = parseJoin(location.hash);
-  if (code) {
-    pendingJoin = code;
-    try { sessionStorage.setItem('tankrechner:join', code); } catch { /* egal */ }
+  const join = /#join=/.test(location.hash) ? parseJoin(location.hash) : null;
+  if (join) {
+    pendingJoin = join;
+    try { sessionStorage.setItem('tankrechner:join', JSON.stringify(join)); } catch { /* egal */ }
     history.replaceState(null, '', location.pathname + location.search);
   } else {
-    try { pendingJoin = sessionStorage.getItem('tankrechner:join'); } catch { /* egal */ }
+    try {
+      const raw = sessionStorage.getItem('tankrechner:join');
+      pendingJoin = raw ? (raw.startsWith('{') ? JSON.parse(raw) : { code: raw, pid: null }) : null;
+      claimOffer = sessionStorage.getItem('tankrechner:claim');
+    } catch { /* egal */ }
   }
 
   // Gemeinsame Daten ändern (und speichern) nur Admins

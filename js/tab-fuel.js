@@ -39,6 +39,10 @@ function sortedStations(fuel) {
 
 /** Günstigste (geöffnete) Tankstelle übernehmen bzw. Preis der gewählten aktualisieren. */
 function applyPriceMode(s) {
+  // Günstigster Preis je Kraftstoff (für Fahrer mit eigenem Auto und anderem Sprit)
+  const byFuel = {};
+  for (const f of ['e5', 'e10', 'diesel']) { const st = sortedStations(f)[0]; if (st?.[f] > 0) byFuel[f] = st[f]; }
+  if (Object.keys(byFuel).length) s.price.byFuel = byFuel;
   const fuel = FUELS[s.car.fuel]?.tk;
   if (!fuel || s.price.mode === 'manual') { s.price.current = null; return; }
   let st;

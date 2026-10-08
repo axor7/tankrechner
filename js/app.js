@@ -1,6 +1,6 @@
 // Einstiegspunkt: App-Gerüst (Navigation je Rolle, Karte), Strecke des Admins, Hintergrund-Berechnungen.
 import { state, update, subscribe, replaceState, defaultState, model, personById, activePersons, allRoutes, liveSnap, todayIso, SHARED_KEYS } from './state.js';
-import { reverseGeocode, fetchRoute, fetchRouteInfo, valhallaRoute, optimizeOrder, fetchSchoolHolidays } from './api.js';
+import { reverseGeocode, fetchRoute, fetchRouteInfo, valhallaRoute, optimizeOrder, fetchSchoolHolidays, fetchPublicHolidays } from './api.js';
 import { MapView } from './map.js';
 import { FUELS, plannedStops, routeKey, mondayOf, addDays, hasOwners, insertDetours } from './calc.js';
 import { searchAlternatives, usesClosure } from './detours.js';
@@ -10,25 +10,29 @@ import { icon } from './icons.js';
 import { stationSelected, startAutoRefresh } from './tab-fuel.js';
 import { autobahnRefs, roadEvents, alongRoute, isCurrent, isClosure } from './traffic.js';
 import { renderHome } from './view-home.js';
-import { renderTrips, renderSheet } from './view-trips.js';
+import { renderTrips } from './view-trips.js';
 import { renderCosts } from './view-costs.js';
 import { renderSettings } from './view-settings.js';
 import { loadExample } from './example.js';
 import { setupVersion } from './version.js';
-import { initAccount, inGroup, isAdmin, openAccount, claims } from './account.js';
+import { initAccount, inGroup, isAdmin, openAccount, claims, groupName, syncState, newClaims } from './account.js';
+import { initSheets, renderSheet, sheetOpen, register, openSheet, closeSheet, sheetHead } from './sheets.js';
+import { avatar } from './people.js';
 import { me, adminSet, setAddress, freezePastWeeks } from './actions.js';
 import { weeks as deriveRange, myBalance, toConfirm } from './derived.js';
 import { renderRouteView, incidentPopup, detourPopup, shortPlace } from './view-route.js';
 import { singleMapData, setSinglePoint } from './view-single.js';
 
+// Vier Reiter, vier Fragen. „Profil & Gruppe“ öffnet das Profilbild oben rechts.
 const ALL_VIEWS = [
-  { id: 'home', label: 'Übersicht', icon: 'house', color: 'blue' },
-  { id: 'trips', label: 'Fahrten', icon: 'calendar-days', color: 'green' },
-  { id: 'costs', label: 'Kosten', icon: 'wallet', color: 'orange' },
-  { id: 'route', label: 'Strecke', icon: 'route', color: 'indigo' },
-  { id: 'settings', label: 'Einstellungen', icon: 'settings', color: 'gray' },
+  { id: 'home', label: 'Heute', icon: 'house', color: 'blue' },
+  { id: 'trips', label: 'Plan', icon: 'calendar-days', color: 'green' },
+  { id: 'costs', label: 'Geld', icon: 'wallet', color: 'orange' },
+  { id: 'route', label: 'Karte', icon: 'map', color: 'indigo' },
+  { id: 'settings', label: 'Profil & Gruppe', icon: 'settings', color: 'gray', hidden: true },
 ];
-const views = () => ALL_VIEWS.filter((v) => !v.admin || isAdmin());
+const views = () => ALL_VIEWS;
+const tabs = () => ALL_VIEWS.filter((v) => !v.hidden);
 
 const $ = (sel) => document.querySelector(sel);
 let map;
@@ -402,22 +406,54 @@ function renderNav() {
   const accounts = claims();
   const badge = (mine ? myBalance(mine).owe.length : 0)
     + toConfirm(mine, { admin: isAdmin(), hasAccount: (pid) => !inGroup() || accounts.has(pid) }).length; // offen + zu bestätigen
-  const vs = views();
+  const homeBadge = newClaims().length;
+  const vs = tabs();
+  const badgeFor = (id) => (id === 'costs' ? badge : id === 'home' ? homeBadge : 0);
   $('#nav-side').replaceChildren(...vs.map((v) => h('button', {
     type: 'button', class: `nav-item ${v.id === cur ? 'active' : ''}`, 'aria-current': v.id === cur ? 'page' : null, onclick: () => go(v.id),
   }, h('span', { class: `sq sq-${v.color}` }, icon(v.icon, { size: 17 })), h('span', {}, v.label),
-  v.id === 'costs' && badge ? h('span', { class: 'badge' }, String(badge)) : null)));
-  const tabs = $('#nav-tabs');
-  tabs.style.gridTemplateColumns = `repeat(${vs.length}, 1fr)`;
-  tabs.replaceChildren(...vs.map((v) => h('button', {
+  badgeFor(v.id) ? h('span', { class: 'badge' }, String(badgeFor(v.id))) : null)));
+  const tabbar = $('#nav-tabs');
+  tabbar.style.gridTemplateColumns = `repeat(${vs.length}, 1fr)`;
+  tabbar.replaceChildren(...vs.map((v) => h('button', {
     type: 'button', class: `tab-item ${v.id === cur ? 'active' : ''}`, 'aria-current': v.id === cur ? 'page' : null, onclick: () => go(v.id),
-  }, icon(v.icon, { size: 24 }), h('span', {}, v.label === 'Einstellungen' ? 'Mehr' : v.label),
-  v.id === 'costs' && badge ? h('span', { class: 'badge' }, String(badge)) : null)));
+  }, icon(v.icon, { size: 24 }), h('span', {}, v.label),
+  badgeFor(v.id) ? h('span', { class: 'badge' }, String(badgeFor(v.id))) : null)));
+  // Profilbild (oben rechts bzw. unten in der Seitenleiste)
+  const status = inGroup() ? syncState() : null;
+  const pic = () => (mine ? avatar(mine, { size: 'md' }) : h('span', { class: 'avatar av-md' }, icon('user', { size: 18 })));
+  const prof = $('#btn-profile');
+  prof.replaceChildren(...[pic(), status ? h('span', { class: `acc-status ${status}` }) : null].filter(Boolean));
+  prof.classList.toggle('active', cur === 'settings');
+  prof.onclick = () => go('settings');
+  $('#btn-profile-side').replaceChildren(...[pic(),
+    h('span', { class: 'grow' }, h('strong', {}, personById(mine)?.name || 'Profil'), h('small', {}, inGroup() ? groupName() : 'Nur auf diesem Gerät')),
+    status ? h('span', { class: `acc-status ${status}` }) : null].filter(Boolean));
+  $('#btn-profile-side').classList.toggle('active', cur === 'settings');
+  $('#btn-profile-side').onclick = () => go('settings');
+  $('#btn-plus').onclick = () => openSheet('plus');
   const mapBtn = $('#btn-map');
   mapBtn.replaceChildren(icon(state.ui.showMap ? 'panel-right-close' : 'map', { size: 19 }));
   mapBtn.classList.toggle('on', !!state.ui.showMap);
   mapBtn.title = state.ui.showMap ? 'Karte ausblenden' : 'Karte einblenden';
 }
+
+// Plus: schnell etwas eintragen oder ausrechnen
+register('plus', () => {
+  const mine = me();
+  const item = (ic, color, title, sub, fn) => h('button', { type: 'button', class: 'list-row has-sq', onclick: fn },
+    h('span', { class: `sq sq-${color}` }, icon(ic, { size: 15 })),
+    h('span', { class: 'grow' }, h('span', { class: 'title' }, title), h('span', { class: 'sub' }, sub)),
+    h('span', { class: 'chev' }, icon('chevron-right', { size: 18 })));
+  return [
+    sheetHead('Neu'),
+    h('div', { class: 'list' },
+      item('navigation', 'indigo', 'Einzelfahrt berechnen', 'Was kostet eine Fahrt, wie viel Sprit braucht sie?', () => { closeSheet(); update((s) => { s.ui.routeSub = 'single'; }); go('route'); }),
+      mine ? item('palm-tree', 'teal', 'Abwesend eintragen', 'Urlaub, krank, Praktikum', () => openSheet('absence', { pid: mine })) : null,
+      item('calendar-days', 'green', 'Einen Tag ändern', 'Wer fährt mit, wer fährt', () => openSheet('day', { date: todayIso() })),
+      isAdmin() ? item('user-plus', 'blue', 'Leute einladen', inGroup() ? 'Link, Code oder QR-Code' : 'Konto anlegen und einladen', () => (inGroup() ? openSheet('invite') : (closeSheet(), openAccount('register')))) : null),
+  ];
+});
 
 // ---------- Rendering ----------
 
@@ -452,6 +488,7 @@ function render() {
   document.body.classList.toggle('map-on', !!state.ui.showMap);
   document.body.classList.toggle('is-admin', isAdmin());
   $('#view-title').textContent = vs.find((v) => v.id === view).label;
+  $('#view-sub').textContent = view === 'home' ? new Date().toLocaleDateString('de-DE', { weekday: 'long', day: 'numeric', month: 'long' }) : '';
   renderNav();
 
   const el = $('#view');
@@ -468,7 +505,7 @@ function render() {
     f?.focus();
     try { if (f?.type === 'text') f.setSelectionRange(f.value.length, f.value.length); } catch { /* egal */ }
   }
-  if ($('#day-dialog')?.open) renderSheet();
+  if (sheetOpen()) renderSheet();
   syncMap();
   ensureRoutes();
   if (isAdmin()) { refreshRoute(); freezeLater(); ensureHolidays(); }
@@ -476,18 +513,31 @@ function render() {
 
 const freezeLater = debounce(() => freezePastWeeks(liveSnap), 1500);
 
-// Schulferien laden (Admin) – gespeichert in den gemeinsamen Daten, damit alle gleich rechnen
+// Schulferien und Feiertage laden (Admin) – gespeichert in den gemeinsamen Daten, damit alle gleich rechnen
 let holidaysLoading = false;
 async function ensureHolidays() {
   const hol = state.holidays;
-  if (!isAdmin() || !hol?.enabled || holidaysLoading) return;
-  if (hol.fetchedFor === hol.region && Date.now() - (hol.fetchedAt || 0) < 14 * 864e5) return;
+  if (!isAdmin() || !hol || holidaysLoading) return;
+  const t0 = todayIso();
+  // Ältere Gruppen: Feiertage ab heute einschalten (nicht rückwirkend)
+  if (!hol.public) { update((s) => { s.holidays = { ...s.holidays, public: { enabled: s.kind !== 'other', from: t0, periods: [], fetchedAt: 0 } }; }); return; }
+  const stale = (x) => x.fetchedFor !== hol.region || Date.now() - (x.fetchedAt || 0) > 14 * 864e5;
+  const school = hol.enabled && stale(hol);
+  const pub = hol.public.enabled && stale(hol.public);
+  if (!school && !pub) return;
   holidaysLoading = true;
   try {
-    const t0 = todayIso();
     const from = addDays(hol.from && hol.from < t0 ? hol.from : t0, -60); // auch Ferien, die schon laufen
-    const periods = await fetchSchoolHolidays(hol.region, from, addDays(t0, 540));
-    update((s) => { s.holidays = { ...s.holidays, periods, fetchedAt: Date.now(), fetchedFor: hol.region }; });
+    const [periods, publicDays] = await Promise.all([
+      school ? fetchSchoolHolidays(hol.region, from, addDays(t0, 540)) : null,
+      pub ? fetchPublicHolidays(hol.region, addDays(t0, -30), addDays(t0, 540)) : null,
+    ]);
+    update((s) => {
+      const next = { ...s.holidays };
+      if (periods) Object.assign(next, { periods, fetchedAt: Date.now(), fetchedFor: hol.region });
+      if (publicDays) next.public = { ...next.public, periods: publicDays, fetchedAt: Date.now(), fetchedFor: hol.region };
+      s.holidays = next;
+    });
   } catch { /* später noch einmal */ } finally { holidaysLoading = false; }
 }
 
@@ -538,6 +588,7 @@ function init() {
   $('#btn-map').onclick = toggleMap;
   document.addEventListener('account-changed', requestRender);
   setupImport();
+  initSheets();
   initAccount();
   requestRender();
   // Karte erst vermessen, wenn die Seite steht (startet die App direkt mit sichtbarer Karte)

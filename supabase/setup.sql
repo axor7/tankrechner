@@ -10,7 +10,7 @@ create table if not exists public.groups (
   name text not null check (char_length(name) between 1 and 80),
   data jsonb not null default '{}'::jsonb,           -- gemeinsame Daten (nur Admins ändern)
   version integer not null default 0,                -- für gleichzeitige Änderungen
-  invite_code text not null unique default substr(replace(gen_random_uuid()::text, '-', ''), 1, 12),
+  invite_code text not null unique,
   created_by uuid not null default auth.uid() references auth.users(id) on delete cascade,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
@@ -71,6 +71,24 @@ grant select, insert on public.group_log to authenticated;
 grant usage, select on sequence public.group_log_id_seq to authenticated;
 
 -- ---------- Hilfsfunktionen ----------
+
+-- Kurzer Einladungscode zum Abtippen: 6 Zeichen ohne Verwechsler (kein 0/O, 1/I/L)
+create or replace function public.new_invite_code() returns text
+language plpgsql volatile set search_path = public as $fn$
+declare
+  alphabet constant text := 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+  code text;
+begin
+  loop
+    code := '';
+    for i in 1..6 loop
+      code := code || substr(alphabet, 1 + floor(random() * length(alphabet))::int, 1);
+    end loop;
+    exit when not exists (select 1 from public.groups where upper(invite_code) = code);
+  end loop;
+  return code;
+end $fn$;
+alter table public.groups alter column invite_code set default public.new_invite_code();
 
 create or replace function public.is_group_member(gid uuid) returns boolean
 language sql stable security definer set search_path = public as $fn$
@@ -141,15 +159,20 @@ begin
   return (select t from public.groups t where t.id = new_id);
 end $fn$;
 
+-- Beitreten mit Link oder Code (Groß-/Kleinschreibung, Bindestriche und Leerzeichen egal)
 create or replace function public.join_group(p_code text, p_display_name text)
 returns public.groups language plpgsql security definer set search_path = public as $fn$
+declare
+  norm text := upper(regexp_replace(coalesce(p_code, ''), '[^A-Za-z0-9]', '', 'g'));
+  gid uuid;
 begin
   if auth.uid() is null then raise exception 'Nicht angemeldet'; end if;
-  if not exists (select 1 from public.groups where invite_code = p_code) then raise exception 'Einladung ungültig'; end if;
+  select id into gid from public.groups where upper(invite_code) = norm;
+  if gid is null then raise exception 'Einladung ungültig'; end if;
   insert into public.group_members (group_id, user_id, display_name, role)
-    select id, auth.uid(), p_display_name, 'member' from public.groups where invite_code = p_code
+    values (gid, auth.uid(), p_display_name, 'member')
     on conflict (group_id, user_id) do nothing;
-  return (select t from public.groups t where t.invite_code = p_code);
+  return (select t from public.groups t where t.id = gid);
 end $fn$;
 
 -- Speichert die gemeinsamen Daten – nur Admins, und nur wenn niemand zwischendurch gespeichert hat.
@@ -184,11 +207,12 @@ returns text language plpgsql security definer set search_path = public as $fn$
 declare new_code text;
 begin
   if not public.is_group_admin(p_group) then raise exception 'Nur Admins'; end if;
-  new_code := substr(replace(gen_random_uuid()::text, '-', ''), 1, 12);
+  new_code := public.new_invite_code();
   update public.groups set invite_code = new_code where id = p_group;
   return new_code;
 end $fn$;
 
+revoke execute on function public.new_invite_code() from public, anon, authenticated;
 revoke execute on function public.create_group(text, jsonb, text, text) from public, anon;
 revoke execute on function public.join_group(text, text) from public, anon;
 revoke execute on function public.save_group(uuid, jsonb, integer) from public, anon;

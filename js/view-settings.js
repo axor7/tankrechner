@@ -1,254 +1,237 @@
-// Ansicht „Einstellungen“: Profil, Ansicht, Fahrgemeinschaft – und für Admins die volle Kontrolle.
-import { state, update, model, personById, persons, todayIso } from './state.js';
-import { isActive, planFor, hasPlan } from './model.js';
+// „Profil & Gruppe“ (über das Profilbild oben rechts): ich selbst, die Gruppe (Einladen, Mitfahrer, Fahrer, Auto, Kosten,
+// fahrfreie Zeiten, Mitglieder), Konto und Daten.
+import { state, update, model, personById, persons } from './state.js';
+import { isActive } from './model.js';
+import { FUELS } from './calc.js';
 import { paypalUser, paypalLink } from './pay.js';
 import { carCard } from './tab-fuel.js';
 import { rulesCard } from './view-costs.js';
-import { planEditor } from './view-trips.js';
+import { carText, upcomingFree } from './view-trips.js';
 import { addressInput } from './address.js';
-import { inGroup, isAdmin, isLoggedIn, groupName, claims, claimPerson, members, myUserId, setRole, removeMember, loadLog, inviteLink, renewInvite } from './account.js';
-import { me, setAddress, setPaypal, setMyName, addPerson, removePerson, setPersonField, adminSet, setDefaultDriver } from './actions.js';
-import { h, toast, fmtDate } from './ui.js';
+import { inGroup, isAdmin, isLoggedIn, groupName, claims, members, myUserId, setRole, removeMember, loadLog, inviteLink, inviteCode, renewInvite, myName } from './account.js';
+import { me, setAddress, setPaypal, setMyName, addPerson, removePerson, setPersonField, adminSet, setDriverInfo } from './actions.js';
+import { register, openSheet, closeSheet, sheetHead } from './sheets.js';
+import { avatar, appTag, rhythmText, absenceText, initials, isPlaceholder } from './people.js';
+import { qrCode } from './qr.js';
+import { h, toast } from './ui.js';
 import { icon } from './icons.js';
 
-export const settingsUi = { openPerson: null, showInactive: false, focus: null, log: null, logLoading: false };
-const WD = ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'];
-const safe = async (fn) => { try { await fn(); } catch (e) { toast(e.message, 'error'); } };
-const initials = (name) => (name || '?').trim().split(/\s+/).map((x) => x[0]).join('').slice(0, 2).toUpperCase();
-
-export function planText(p) {
-  if (!hasPlan(p)) return 'keine festen Tage';
-  const pt = planFor(p, new Date().toISOString().slice(0, 10));
-  const f = (arr) => {
-    const idx = arr.map((v, i) => (v ? i : -1)).filter((i) => i >= 0);
-    if (!idx.length) return 'nie';
-    const run = idx.every((v, k) => k === 0 || v === idx[k - 1] + 1);
-    return run && idx.length > 2 ? `${WD[idx[0]]}–${WD[idx[idx.length - 1]]}` : idx.map((i) => WD[i]).join(', ');
-  };
-  const a = f(pt.hin); const b = f(pt.rueck);
-  return state.roundTrip === false || a === b ? a : `hin ${a} · zurück ${b}`;
-}
+export const settingsUi = { log: null, logLoading: false, focus: null };
+const safe = async (fn) => { try { await fn(); return true; } catch (e) { toast(e.message, 'error'); return false; } };
+const copy = async (text, msg) => { try { await navigator.clipboard.writeText(text); toast(msg, 'ok'); } catch { prompt('Kopieren:', text); } };
+const shareLink = async (url, text) => {
+  if (navigator.share) { try { await navigator.share({ title: 'Tankrechner', text, url }); return; } catch (e) { if (e?.name === 'AbortError') return; } }
+  copy(`${text}\n${url}`, 'Einladung kopiert – jetzt z. B. in WhatsApp einfügen');
+};
+const rerender = () => update(() => {});
 
 const section = (title, content, foot) => h('div', { class: 'section' },
   title ? h('div', { class: 'section-title' }, title) : null, content, foot ? h('div', { class: 'section-foot' }, foot) : null);
+const row = ({ ic, color, title, sub, onclick, value, danger }) => h(onclick ? 'button' : 'div', { type: onclick ? 'button' : null, class: 'list-row has-sq', onclick },
+  h('span', { class: `sq sq-${color}` }, icon(ic, { size: 15 })),
+  h('span', { class: 'grow' }, h('span', { class: `title ${danger ? 'danger-text' : ''}` }, title), sub ? h('span', { class: 'sub' }, sub) : null),
+  value ? h('span', { class: 'value' }, value) : null,
+  onclick ? h('span', { class: 'chev' }, icon('chevron-right', { size: 18 })) : null);
 
-// ---------- Mein Profil ----------
+// ---------- Ich ----------
 
-function profileSection() {
+function meSection() {
   const mine = me();
   const p = personById(mine);
   if (!p) return null;
-  const driver = mine === state.defaultDriver;
+  const m = model();
+  const mainDriver = mine === state.defaultDriver;
   const pp = paypalUser(p.paypal);
-  return section('Mein Profil', h('div', { class: 'list' },
-    h('div', { class: 'list-row' },
-      h('span', { class: 'dot-lg', style: { '--pc': p.color } }, initials(p.name)),
-      h('span', { class: 'grow' },
-        (p.self || isAdmin()) ? h('input', { type: 'text', value: p.name, 'aria-label': 'Name', onchange: (e) => safe(() => setMyName(e.target.value.trim() || p.name)) }) : h('span', { class: 'title' }, p.name),
-        h('span', { class: 'sub' }, driver ? 'Fahrer' : 'Mitfahrer'))),
-    h('div', { class: 'list-sub' },
-      h('div', { class: 'field' }, driver ? 'Startadresse (hier beginnt die Fahrt)' : 'Abholadresse',
-        addressInput({ value: p.address, placeholder: 'Adresse suchen …', allowLocate: true, onSelect: (a) => safe(() => setAddress(mine, a)) })),
-      h('label', { class: 'field' }, 'PayPal.me-Name (nur nötig, wenn du Geld bekommst)',
-        h('input', {
-          type: 'text', value: p.paypal || '', placeholder: 'z. B. maxmuster', spellcheck: false, autocapitalize: 'off', 'data-focus-key': 'my-paypal',
-          onchange: (e) => safe(() => setPaypal(mine, paypalUser(e.target.value) || e.target.value.trim())),
-        }),
-        p.paypal ? h('small', { class: pp ? 'ok' : 'warn' }, pp ? paypalLink(pp).replace('https://', '') : 'Ungültiger Name') : null),
-    ),
-  ));
-}
-
-// ---------- Ansicht & Fahrgemeinschaft ----------
-
-function viewSection() {
-  const detailed = state.ui.detail === 'detailed';
-  return section('Ansicht', h('div', { class: 'card' },
-    h('div', { class: 'segmented' },
-      h('button', { type: 'button', class: !detailed ? 'active' : '', onclick: () => update((s) => { s.ui.detail = 'simple'; }) }, 'Einfach'),
-      h('button', { type: 'button', class: detailed ? 'active' : '', onclick: () => update((s) => { s.ui.detail = 'detailed'; }) }, 'Detailliert')),
-    h('p', { class: 'hint small' }, detailed ? 'Zeigt bei den Kosten alle Zahlen: Zeiträume, Anteile, Kilometer, jede einzelne Fahrt.' : 'Zeigt nur das Wichtigste. Details gibt es trotzdem auf Wunsch („Wie berechnet?“).'),
-  ));
-}
-
-function groupSection(ctx) {
-  const mine = me();
-  return section('Fahrgemeinschaft', h('div', { class: 'list' },
-    h('button', { type: 'button', class: 'list-row has-sq', onclick: () => ctx.openAccount() },
-      h('span', { class: 'sq sq-blue' }, icon(inGroup() ? 'users' : 'cloud', { size: 16 })),
-      h('span', { class: 'grow' },
-        h('span', { class: 'title' }, inGroup() ? groupName() : isLoggedIn() ? 'Angemeldet – keine Fahrgemeinschaft geöffnet' : 'Anmelden & gemeinsam nutzen'),
-        h('span', { class: 'sub' }, inGroup() ? `Du bist ${isAdmin() ? 'Admin' : 'Mitfahrer'} · Konto, Wechseln, Verlassen` : 'Mitfahrer einladen – jeder trägt seine Tage selbst ein')),
-      h('span', { class: 'chev' }, icon('chevron-right', { size: 18 }))),
-    !inGroup() ? h('label', { class: 'list-row has-sq' },
-      h('span', { class: 'sq sq-purple' }, icon('user-check', { size: 16 })),
-      h('span', { class: 'grow' }, 'Das bin ich'),
-      h('select', { style: { width: 'auto' }, onchange: (e) => safe(() => claimPerson(e.target.value || null)) },
-        persons().filter(isActive).map((p) => h('option', { value: p.id, selected: p.id === mine }, p.name)))) : null,
-  ));
-}
-
-// ---------- Admin: Mitfahrer ----------
-
-function personDetails(p) {
-  const claim = claims().get(p.id);
-  return h('div', { class: 'list-sub', style: { '--pc': p.color } },
-    h('div', { class: 'person-fields' },
-      h('input', { type: 'color', value: p.color, 'aria-label': 'Farbe', onchange: (e) => safe(() => setPersonField(p.id, 'color', e.target.value)) }),
-      h('input', { type: 'text', value: p.name, 'aria-label': 'Name', onchange: (e) => safe(() => setPersonField(p.id, 'name', e.target.value.trim() || p.name, `Name geändert: ${p.name} → ${e.target.value.trim()}`)) })),
-    h('div', { class: 'field' }, p.id === state.defaultDriver ? 'Startadresse' : 'Abholadresse',
-      addressInput({ value: p.address, onSelect: (a) => safe(() => setAddress(p.id, a)) })),
-    h('div', { class: 'field' }, 'Regelplan', planEditor({ pid: p.id })),
-    h('div', { class: 'row gap wrap' },
-      claim ? h('span', { class: 'muted small' }, `Konto: ${claim.name}`) : h('span', { class: 'muted small' }, 'Ohne Konto – du pflegst die Tage'),
-      h('button', {
-        type: 'button', class: 'btn btn-small btn-danger', style: { marginLeft: 'auto' }, disabled: p.id === state.defaultDriver,
-        onclick: () => { if (confirm(`${p.name} entfernen? Vergangene Fahrten bleiben in der Abrechnung erhalten, ab heute fährt ${p.name} nicht mehr mit.\n\nTipp: Wer nur Pause macht, braucht nicht entfernt zu werden – einfach die Woche im Kalender auf „gar nicht“ stellen oder den Regelplan leeren.`)) safe(() => { removePerson(p.id); settingsUi.openPerson = null; }); },
-      }, icon('trash-2', { size: 15 }), 'Entfernen')),
+  const canDrive = m.canDrive(p);
+  return h('div', { class: 'section' },
+    h('div', { class: 'list' },
+      h('div', { class: 'list-row me-row' },
+        avatar(mine, { size: 'lg' }),
+        h('span', { class: 'grow' },
+          (p.self || isAdmin()) ? h('input', { type: 'text', value: p.name, 'aria-label': 'Name', 'data-focus-key': 'my-name', onchange: (e) => safe(() => setMyName(e.target.value.trim() || p.name)) }) : h('span', { class: 'title big' }, p.name),
+          h('span', { class: 'sub' }, [mainDriver ? 'Fahrer' : canDrive ? 'Mitfahrer · kann fahren' : 'Mitfahrer', inGroup() ? groupName() : null].filter(Boolean).join(' · ')))),
+      h('div', { class: 'list-sub' },
+        h('div', { class: 'field' }, mainDriver ? 'Startadresse (hier beginnt die Fahrt)' : 'Abholadresse',
+          addressInput({ value: p.address, placeholder: 'Adresse suchen …', allowLocate: true, focusKey: 'my-addr', onSelect: (a) => safe(() => setAddress(mine, a)) })),
+        h('label', { class: 'field' }, 'PayPal.me-Name (damit man dir direkt zahlen kann)',
+          h('input', {
+            type: 'text', value: p.paypal || '', placeholder: 'z. B. maxmuster', spellcheck: false, autocapitalize: 'off', 'data-focus-key': 'my-paypal',
+            onchange: (e) => safe(() => setPaypal(mine, paypalUser(e.target.value) || e.target.value.trim())),
+          }),
+          p.paypal ? h('small', { class: pp ? 'ok' : 'warn' }, pp ? paypalLink(pp).replace('https://', '') : 'Ungültiger Name') : null)),
+      !mainDriver ? h('label', { class: 'list-row switch-row' },
+        h('span', { class: 'grow' }, h('span', { class: 'title' }, 'Ich kann auch fahren'), h('span', { class: 'sub' }, 'Dann fragt dich die App, wenn der Fahrer ausfällt')),
+        h('input', { type: 'checkbox', class: 'switch', checked: canDrive, onchange: (e) => safe(() => setDriverInfo(mine, { drives: e.target.checked })) })) : null,
+      canDrive && !mainDriver ? row({ ic: 'car', color: 'indigo', title: 'Mein Auto', sub: carText(p), onclick: () => openSheet('car', { pid: mine }) }) : null),
   );
 }
 
-function personRow(p) {
-  const open = settingsUi.openPerson === p.id;
-  const claim = claims().get(p.id);
+// ---------- Gruppe ----------
+
+function groupSection(ctx) {
+  const admin = isAdmin();
+  const active = persons().filter(isActive);
+  const placeholders = active.filter((p) => isPlaceholder(p.id) && p.id !== me());
+  const free = upcomingFree(1)[0];
+  return section(inGroup() ? groupName() : 'Fahrgemeinschaft', h('div', { class: 'list' },
+    row({ ic: 'user-plus', color: 'green', title: 'Leute einladen', sub: inGroup() ? `Link, Code oder QR-Code${placeholders.length ? ` · ${placeholders.length} ohne App` : ''}` : 'Konto anlegen – dann zahlt jeder selbst in der App', onclick: () => (inGroup() ? openSheet('invite') : ctx.openAccount(isLoggedIn() ? undefined : 'register')) }),
+    row({ ic: 'users', color: 'blue', title: 'Mitfahrer', sub: active.map((p) => p.name).join(', '), onclick: () => openSheet('people') }),
+    row({ ic: 'car', color: 'indigo', title: 'Wer fährt?', sub: 'Fahrer, Vertretung, eigene Autos', onclick: () => openSheet('drivers') }),
+    row({ ic: 'clock', color: 'orange', title: 'Uhrzeiten', sub: state.times?.arrive ? `an ${state.times.arrive}${state.times.leave ? ` · zurück ab ${state.times.leave}` : ''}` : 'Für die Abholzeiten', onclick: admin ? () => openSheet('times') : null }),
+    row({ ic: 'sun', color: 'yellow', title: 'Fahrfreie Zeiten', sub: free ? `Als Nächstes: ${free.name}` : 'Schulferien, Feiertage, eigene Zeiträume', onclick: () => openSheet('free') }),
+    admin ? row({ ic: 'fuel', color: 'orange', title: 'Auto & Spritpreis', sub: `${String(state.car.consumption).replace('.', ',')} l/100 km · ${FUELS[state.car.fuel]?.label}`, onclick: () => openSheet('car-group') }) : null,
+    admin ? row({ ic: 'hand-coins', color: 'green', title: 'Kostenregel', sub: state.split.mode === 'segment' ? 'Nach Teilstrecken (fair)' : 'Gleich pro Fahrt', onclick: () => openSheet('rules') }) : null,
+  ));
+}
+
+register('car-group', () => [sheetHead('Auto & Spritpreis', 'Das Auto der Gruppe (Hauptfahrer)'), carCard(),
+  h('button', { type: 'button', class: 'btn full', onclick: () => { closeSheet(); update((s) => { s.ui.tab = 'route'; s.ui.routeSub = 'fuel'; }); } }, icon('fuel', { size: 16 }), 'Spritpreis & Tankstellen an der Strecke')]);
+register('rules', () => [sheetHead('Kostenregel', 'Wie die Kosten aufgeteilt werden'), rulesCard()]);
+
+// ---------- Mitfahrer (Plätze) ----------
+
+let newName = '';
+register('people', () => {
+  const admin = isAdmin();
+  const active = persons().filter(isActive);
+  const c = claims();
   return [
-    h('button', {
-      type: 'button', id: `person-${p.id}`, class: 'list-row person-row', 'aria-expanded': String(open), style: { '--pc': p.color },
-      onclick: () => { settingsUi.openPerson = open ? null : p.id; update(() => {}); },
-    },
-      h('span', { class: 'dot-lg' }, initials(p.name)),
-      h('span', { class: 'grow' },
-        h('span', { class: 'title' }, p.name, p.id === state.defaultDriver ? h('span', { class: 'muted small' }, ' · Fahrer') : null),
-        h('span', { class: 'sub' }, [p.address?.label ? p.address.label.split(',')[0] : 'keine Adresse', planText(p)].join(' · '))),
-      claim ? h('span', { class: `claim-badge ${claim.me ? 'me' : ''}` }, claim.me ? 'Du' : claim.name) : null,
-      h('span', { class: 'chev' }, icon(open ? 'chevron-down' : 'chevron-right', { size: 18 }))),
-    open ? personDetails(p) : null,
-  ];
-}
-
-function personsSection() {
-  let newName = '';
-  const active = persons().filter(isActive); // entfernte (archivierte) Personen ausblenden
-  return section(`Mitfahrer (${active.length})`, [
+    sheetHead('Mitfahrer', inGroup() ? `${active.filter((p) => c.has(p.id)).length} mit App · ${active.filter((p) => !c.has(p.id)).length} ohne App` : `${active.length} Personen`),
     h('div', { class: 'list' },
-      active.map(personRow),
-      h('form', { class: 'list-row', onsubmit: (e) => { e.preventDefault(); if (newName.trim()) safe(() => addPerson(newName.trim())); } },
+      active.map((p) => h('button', { type: 'button', class: 'list-row', onclick: () => openSheet('person', { pid: p.id }) },
+        avatar(p.id, { size: 'sm', driver: p.id === state.defaultDriver }),
+        h('span', { class: 'grow' }, h('span', { class: 'title' }, p.name, p.id === me() ? h('span', { class: 'muted' }, ' (du)') : null, ' ', appTag(p.id)),
+          h('span', { class: 'sub' }, [p.address?.label ? p.address.label.split(',')[0] : 'keine Adresse', rhythmText(p)].join(' · '))),
+        h('span', { class: 'chev' }, icon('chevron-right', { size: 18 })))),
+      admin ? h('form', { class: 'list-row', onsubmit: (e) => { e.preventDefault(); if (newName.trim()) safe(() => { addPerson(newName.trim()); newName = ''; }); } },
         h('span', { class: 'sq sq-green' }, icon('user-plus', { size: 16 })),
-        h('input', { type: 'text', placeholder: 'Mitfahrer ohne App hinzufügen', 'data-focus-key': 'new-person', oninput: (e) => { newName = e.target.value; } }),
-        h('button', { type: 'submit', class: 'btn btn-small' }, 'Hinzufügen'))),
-    h('div', { class: 'list', style: { marginTop: '.5rem' } },
-      h('label', { class: 'list-row has-sq' },
-        h('span', { class: 'sq sq-blue' }, icon('car', { size: 16 })),
-        h('span', { class: 'grow' }, 'Fahrer (Auto)'),
-        h('select', { style: { width: 'auto' }, onchange: (e) => safe(() => setDefaultDriver(e.target.value)) },
-          active.map((p) => h('option', { value: p.id, selected: p.id === state.defaultDriver }, p.name))))),
-  ], 'Mitfahrer mit Konto pflegen Adresse und Tage selbst. Wer mal eine Woche nicht mitfährt: im Kalender auf die KW tippen. Ein Fahrerwechsel gilt ab heute.');
-}
+        h('input', { type: 'text', placeholder: 'Name – Platz anlegen', 'data-focus-key': 'new-person', value: newName, oninput: (e) => { newName = e.target.value; } }),
+        h('button', { type: 'submit', class: 'btn btn-small' }, 'Anlegen')) : null),
+    h('p', { class: 'hint small' }, 'Ein Platz für jeden, der mitfährt. Wer die App nicht hat, für den trägst du Fahrten ein und hakst Zahlungen ab. Mit einer Einladung wird der Platz übernommen – alles Bisherige bleibt.'),
+  ];
+});
 
-// ---------- Admin: Mitglieder & Rechte ----------
+register('person', ({ pid }) => {
+  const p = personById(pid);
+  if (!p) return null;
+  const admin = isAdmin();
+  const claim = claims().get(pid);
+  const edit = admin;
+  return [
+    sheetHead(p.name, claim ? `hat die App · ${claim.me ? 'du' : claim.name}` : inGroup() ? 'ohne App – du trägst für ihn ein' : null),
+    edit ? h('div', { class: 'card' },
+      h('div', { class: 'person-fields' },
+        h('input', { type: 'color', value: p.color, 'aria-label': 'Farbe', onchange: (e) => safe(() => setPersonField(pid, 'color', e.target.value)) }),
+        h('input', { type: 'text', value: p.name, 'aria-label': 'Name', 'data-focus-key': `pname-${pid}`, onchange: (e) => safe(() => setPersonField(pid, 'name', e.target.value.trim() || p.name, `Name geändert: ${p.name} → ${e.target.value.trim()}`)) })),
+      h('div', { class: 'field' }, pid === state.defaultDriver ? 'Startadresse' : 'Abholadresse',
+        addressInput({ value: p.address, focusKey: `paddr-${pid}`, onSelect: (a) => safe(() => setAddress(pid, a)) }))) : null,
+    h('div', { class: 'list' },
+      row({ ic: 'repeat', color: 'blue', title: 'Rhythmus', sub: rhythmText(p), onclick: edit || pid === me() ? () => openSheet('rhythm', { pid }) : null }),
+      row({ ic: 'palm-tree', color: 'teal', title: 'Abwesend', sub: absenceText(p) || 'Urlaub, krank …', onclick: edit || pid === me() ? () => openSheet('absence', { pid }) : null }),
+      row({ ic: 'car', color: 'indigo', title: 'Auto', sub: carText(p), onclick: edit || pid === me() ? () => openSheet('car', { pid }) : null }),
+      inGroup() && !claim && admin ? row({ ic: 'qr-code', color: 'green', title: `${p.name} einladen`, sub: 'Persönlicher Link oder QR-Code für diesen Platz', onclick: () => openSheet('invite-person', { pid }) }) : null),
+    admin && pid !== state.defaultDriver ? h('button', {
+      type: 'button', class: 'btn btn-danger',
+      onclick: () => { if (confirm(`${p.name} entfernen? Vergangene Fahrten bleiben in der Abrechnung, ab heute fährt ${p.name} nicht mehr mit.\n\nTipp: Wer nur Pause macht, braucht nicht entfernt zu werden – einfach „Abwesend“ eintragen.`)) safe(() => { removePerson(pid); openSheet('people'); }); },
+    }, icon('trash-2', { size: 15 }), 'Entfernen') : null,
+  ];
+});
+
+// ---------- Einladen ----------
+
+register('invite', () => {
+  if (!inGroup()) return [sheetHead('Leute einladen'), h('p', { class: 'hint' }, 'Zum Einladen braucht ihr eine gemeinsame Fahrgemeinschaft – dafür ein Konto anlegen.')];
+  const link = inviteLink();
+  const code = inviteCode();
+  const admin = isAdmin();
+  const placeholders = persons().filter((p) => isActive(p) && isPlaceholder(p.id));
+  return [
+    sheetHead('Leute einladen', 'Für alle: Wer den Link öffnet, den QR-Code scannt oder den Code eingibt, sucht sich den eigenen Namen aus.'),
+    h('div', { class: 'invite-box' },
+      qrCode(link, { onReady: rerender }),
+      h('div', { class: 'invite-code' }, h('small', { class: 'muted' }, 'Code'), h('strong', {}, code || '…'))),
+    h('div', { class: 'row gap' },
+      h('button', { type: 'button', class: 'btn btn-primary grow', disabled: !link, onclick: () => shareLink(link, `Komm in unsere Fahrgemeinschaft „${groupName()}“ – Code ${code}`) }, icon('share', { size: 16 }), 'Link teilen'),
+      h('button', { type: 'button', class: 'btn grow', disabled: !code, onclick: () => copy(code, 'Code kopiert') }, icon('copy', { size: 16 }), 'Code kopieren')),
+    placeholders.length ? h('div', { class: 'section' },
+      h('div', { class: 'section-title' }, 'Oder persönlich, direkt für einen Platz'),
+      h('div', { class: 'list' }, placeholders.map((p) => h('button', { type: 'button', class: 'list-row', onclick: () => openSheet('invite-person', { pid: p.id }) },
+        avatar(p.id, { size: 'sm' }), h('span', { class: 'grow' }, p.name), h('span', { class: 'value' }, 'ohne App'), h('span', { class: 'chev' }, icon('chevron-right', { size: 18 })))))) : null,
+    admin ? h('button', { type: 'button', class: 'link small', style: { alignSelf: 'center' }, onclick: () => { if (confirm('Neuen Link und Code erstellen? Der alte Link und der alte Code funktionieren dann nicht mehr.')) safe(renewInvite); } }, 'Neuen Link und Code erstellen') : null,
+  ];
+});
+
+register('invite-person', ({ pid }) => {
+  const p = personById(pid);
+  if (!p) return null;
+  const link = inviteLink(pid);
+  return [
+    sheetHead(`${p.name} einladen`, `Dieser Link gehört nur zum Platz „${p.name}“. Wer ihn öffnet, muss nichts auswählen und bestätigt nur noch.`),
+    h('div', { class: 'invite-box' }, qrCode(link, { onReady: rerender })),
+    h('button', { type: 'button', class: 'btn btn-primary full', disabled: !link, onclick: () => shareLink(link, `Hi ${p.name}, hier ist dein Platz in unserer Fahrgemeinschaft „${groupName()}“:`) }, icon('share', { size: 16 }), 'Link teilen'),
+    h('button', { type: 'button', class: 'btn full', disabled: !link, onclick: () => copy(link, 'Link kopiert') }, icon('copy', { size: 16 }), 'Link kopieren'),
+    h('p', { class: 'hint small' }, `Sobald ${p.name} dabei ist, siehst du es oben auf „Heute“ – mit „Passt“ oder „Rückgängig“.`),
+  ];
+});
+
+// ---------- Mitglieder & Rechte, Verlauf ----------
 
 function membersSection() {
-  if (!inGroup()) return null;
+  if (!inGroup() || !isAdmin()) return null;
   const list = members();
-  const link = inviteLink();
-  return section('Mitglieder & Rechte', [
-    h('div', { class: 'list' },
-      list.map((m) => h('div', { class: 'list-row' },
-        h('span', { class: 'grow' },
-          h('span', { class: 'title' }, m.display_name || 'Unbekannt', m.user_id === myUserId() ? h('span', { class: 'muted' }, ' (du)') : null),
-          h('span', { class: 'sub' }, m.person_id ? `ist ${personById(m.person_id)?.name || '?'}` : 'hat sich noch nicht zugeordnet')),
-        h('label', { class: 'row gap small', style: { gap: '.4rem' } }, 'Admin',
-          h('input', {
-            type: 'checkbox', class: 'switch', checked: m.role === 'admin',
-            onchange: (e) => safe(async () => { await setRole(m.user_id, e.target.checked ? 'admin' : 'member'); toast('Rechte geändert', 'ok'); }),
-          })),
-        m.user_id !== myUserId() ? h('button', {
-          type: 'button', class: 'icon-btn danger', 'aria-label': 'Entfernen', title: 'Aus der Fahrgemeinschaft entfernen',
-          onclick: () => { if (confirm(`${m.display_name} aus der Fahrgemeinschaft entfernen?`)) safe(() => removeMember(m.user_id)); },
-        }, icon('x', { size: 16 })) : null)),
-      h('div', { class: 'list-row' },
-        h('span', { class: 'sq sq-green' }, icon('link', { size: 16 })),
-        h('span', { class: 'grow' }, h('span', { class: 'title' }, 'Einladungslink'), h('span', { class: 'sub' }, link ? link.replace(/^https?:\/\//, '') : 'wird geladen …')),
-        h('button', { type: 'button', class: 'btn btn-small', disabled: !link, onclick: async () => { try { await navigator.clipboard.writeText(link); toast('Link kopiert', 'ok'); } catch { prompt('Link:', link); } } }, 'Kopieren'),
-        h('button', { type: 'button', class: 'icon-btn', title: 'Neuen Link erstellen (alter wird ungültig)', 'aria-label': 'Neuen Link erstellen', onclick: () => { if (confirm('Neuen Einladungslink erstellen? Der alte Link funktioniert dann nicht mehr.')) safe(renewInvite); } }, icon('refresh-cw', { size: 16 })))),
-  ], 'Admins sehen alles, können alles ändern und das Änderungsprotokoll lesen. Es muss immer mindestens einen Admin geben.');
+  return section('Mitglieder & Rechte', h('div', { class: 'list' },
+    list.map((m) => h('div', { class: 'list-row' },
+      m.person_id && personById(m.person_id) ? avatar(m.person_id, { size: 'sm' }) : h('span', { class: 'avatar av-sm' }, initials(m.display_name)),
+      h('span', { class: 'grow' },
+        h('span', { class: 'title' }, m.display_name || 'Unbekannt', m.user_id === myUserId() ? h('span', { class: 'muted' }, ' (du)') : null),
+        h('span', { class: 'sub' }, m.person_id ? `Platz: ${personById(m.person_id)?.name || '?'}` : 'hat noch keinen Platz übernommen')),
+      h('label', { class: 'row gap small', style: { gap: '.4rem' } }, 'Admin',
+        h('input', {
+          type: 'checkbox', class: 'switch', checked: m.role === 'admin',
+          onchange: (e) => safe(async () => { await setRole(m.user_id, e.target.checked ? 'admin' : 'member'); toast('Rechte geändert', 'ok'); }),
+        })),
+      m.user_id !== myUserId() ? h('button', {
+        type: 'button', class: 'icon-btn danger', 'aria-label': 'Entfernen', title: 'Aus der Fahrgemeinschaft entfernen',
+        onclick: () => { if (confirm(`${m.display_name} aus der Fahrgemeinschaft entfernen? Der Platz bleibt erhalten und ist wieder frei.`)) safe(() => removeMember(m.user_id)); },
+      }, icon('x', { size: 16 })) : null))),
+  'Admins (in der Regel die Fahrer) ändern die Daten der Gruppe und die Fahrten aller. Mitfahrer ändern ihre eigenen Fahrten.');
 }
 
-// ---------- Admin: Protokoll ----------
-
 function logSection() {
+  if (!isAdmin()) return null;
   const rows = settingsUi.log;
-  const loadIt = async () => { settingsUi.logLoading = true; update(() => {}); try { settingsUi.log = await loadLog(); } catch (e) { toast(e.message, 'error'); } settingsUi.logLoading = false; update(() => {}); };
-  return section('Änderungsprotokoll', h('div', { class: 'list' },
-    !rows ? h('button', { type: 'button', class: 'list-row has-sq', onclick: loadIt },
-      h('span', { class: 'sq sq-gray' }, icon('list-checks', { size: 16 })),
-      h('span', { class: 'grow' }, settingsUi.logLoading ? 'Lade …' : 'Wer hat was wann geändert?'),
-      h('span', { class: 'chev' }, icon('chevron-right', { size: 18 })))
+  const loadIt = async () => { settingsUi.logLoading = true; rerender(); try { settingsUi.log = await loadLog(); } catch (e) { toast(e.message, 'error'); } settingsUi.logLoading = false; rerender(); };
+  return section('Verlauf', h('div', { class: 'list' },
+    !rows ? row({ ic: 'list-checks', color: 'gray', title: settingsUi.logLoading ? 'Lade …' : 'Wer hat was wann geändert?', onclick: loadIt })
       : [
-        rows.length ? rows.map((r) => h('div', { class: 'list-row log-row' },
+        rows.length ? rows.slice(0, 80).map((r) => h('div', { class: 'list-row log-row' },
           h('span', { class: 'grow' }, h('span', { class: 'title' }, h('strong', {}, r.actor || '?'), ' ', r.action),
             h('span', { class: 'sub' }, new Date(r.at).toLocaleString('de-DE', { weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })))))
           : h('div', { class: 'list-row muted' }, 'Noch keine Einträge.'),
         h('button', { type: 'button', class: 'list-row', onclick: loadIt }, h('span', { class: 'grow', style: { color: 'var(--primary)' } }, 'Aktualisieren')),
-      ],
-  ));
+      ]));
+}
+
+// ---------- Konto & Daten ----------
+
+function accountSection(ctx) {
+  return section('Konto', h('div', { class: 'list' },
+    isLoggedIn()
+      ? row({ ic: 'circle-user', color: 'gray', title: myName(), sub: inGroup() ? `${groupName()} · Gruppe wechseln, verlassen, Passwort` : 'Fahrgemeinschaft erstellen oder beitreten', onclick: () => ctx.openAccount() })
+      : row({ ic: 'cloud', color: 'blue', title: 'Anmelden & gemeinsam nutzen', sub: 'Ohne Konto bleibt alles nur auf diesem Gerät', onclick: () => ctx.openAccount(isLoggedIn() ? undefined : 'login') })));
 }
 
 function dataSection(ctx) {
-  const row = (ic, color, label, onclick, danger) => h('button', { type: 'button', class: 'list-row has-sq', onclick },
-    h('span', { class: `sq sq-${color}` }, icon(ic, { size: 16 })), h('span', { class: `grow ${danger ? 'danger-text' : ''}` }, label));
+  if (!isAdmin()) return null;
   return section('Daten', h('div', { class: 'list' },
-    row('sparkles', 'yellow', 'Beispiel laden', ctx.data.example),
-    row('download', 'teal', 'Daten exportieren', ctx.data.exportData),
-    row('upload', 'teal', 'Daten importieren', ctx.data.importData),
-    row('rotate-ccw', 'gray', 'Einrichtung erneut anzeigen', () => adminSet((s) => { s.setupDone = false; s.ui.tab = 'home'; })),
-    row('trash-2', 'red', 'Alles zurücksetzen', ctx.data.reset, true),
-  ));
-}
-
-const STATES = [['DE-BW', 'Baden-Württemberg'], ['DE-BY', 'Bayern'], ['DE-BE', 'Berlin'], ['DE-BB', 'Brandenburg'], ['DE-HB', 'Bremen'], ['DE-HH', 'Hamburg'],
-  ['DE-HE', 'Hessen'], ['DE-MV', 'Mecklenburg-Vorpommern'], ['DE-NI', 'Niedersachsen'], ['DE-NW', 'Nordrhein-Westfalen'], ['DE-RP', 'Rheinland-Pfalz'],
-  ['DE-SL', 'Saarland'], ['DE-SN', 'Sachsen'], ['DE-ST', 'Sachsen-Anhalt'], ['DE-SH', 'Schleswig-Holstein'], ['DE-TH', 'Thüringen']];
-
-function holidaySection() {
-  const hol = state.holidays || {};
-  const today = todayIso();
-  const upcoming = (hol.periods || []).filter((p) => p.end >= today && (!hol.from || p.end >= hol.from)).slice(0, 4);
-  const stateName = STATES.find(([c]) => c === hol.region)?.[1] || hol.region;
-  const span = (p) => (p.start === p.end ? fmtDate(p.start) : `${fmtDate(p.start)} – ${fmtDate(p.end)}`);
-  const set = (fn, text) => safe(() => adminSet(fn, text));
-  return section('Schulferien', h('div', { class: 'card' },
-    h('label', { class: 'switch-row' }, h('span', {}, h('strong', {}, 'In den Schulferien keine Fahrten')),
-      h('input', {
-        type: 'checkbox', class: 'switch', checked: !!hol.enabled,
-        onchange: (e) => set((s) => { s.holidays = { ...s.holidays, enabled: e.target.checked, from: e.target.checked ? today : s.holidays?.from, fetchedAt: 0 }; },
-          `Schulferien ${e.target.checked ? 'an: in den Ferien keine Fahrten' : 'aus'}`),
-      })),
-    hol.enabled ? [
-      h('label', { class: 'field' }, 'Bundesland',
-        h('select', { onchange: (e) => set((s) => { s.holidays = { ...s.holidays, region: e.target.value, periods: [], fetchedAt: 0 }; }, `Schulferien: ${STATES.find(([c]) => c === e.target.value)?.[1]}`) },
-          STATES.map(([c, n]) => h('option', { value: c, selected: c === hol.region }, n)))),
-      upcoming.length
-        ? h('ul', { class: 'holiday-list' }, upcoming.map((p) => h('li', {}, h('span', {}, p.name), h('span', { class: 'muted' }, span(p)))))
-        : h('p', { class: 'hint small' }, `Ferientermine für ${stateName} werden geladen …`),
-    ] : null,
-    h('p', { class: 'hint small' }, 'Nach Regelplan fährt in den Ferien niemand, es entstehen keine Kosten. Wer trotzdem fährt, tippt den Tag im Kalender an und trägt sich ein – oder stellt die ganze Woche über die KW ein. Gilt ab dem Einschalten, vergangene Wochen bleiben, wie sie waren.'),
-  ));
+    row({ ic: 'sparkles', color: 'yellow', title: 'Beispiel laden', onclick: ctx.data.example }),
+    row({ ic: 'download', color: 'teal', title: 'Daten exportieren', onclick: ctx.data.exportData }),
+    row({ ic: 'upload', color: 'teal', title: 'Daten importieren', onclick: ctx.data.importData }),
+    row({ ic: 'rotate-ccw', color: 'gray', title: 'Einrichtung erneut anzeigen', onclick: () => adminSet((s) => { s.setupDone = false; s.ui.tab = 'home'; }) }),
+    row({ ic: 'trash-2', color: 'red', title: 'Alles zurücksetzen', onclick: ctx.data.reset, danger: true })));
 }
 
 export function renderSettings(el, ctx) {
-  const admin = isAdmin();
-  el.append(...[profileSection(), viewSection(), groupSection(ctx)].filter(Boolean));
-  if (admin) {
-    el.append(...[
-      personsSection(),
-      membersSection(),
-      section('Auto & Spritpreis', carCard(), 'Den aktuellen Spritpreis und Tankstellen findest du unter Strecke → Spritpreis.'),
-      section('Aufteilung', rulesCard()),
-      holidaySection(),
-      logSection(),
-      dataSection(ctx),
-    ].filter(Boolean));
-  }
+  el.append(...[meSection(), groupSection(ctx), membersSection(), logSection(), accountSection(ctx), dataSection(ctx)].filter(Boolean));
   if (settingsUi.focus === 'paypal') { settingsUi.focus = null; setTimeout(() => el.querySelector('[data-focus-key="my-paypal"]')?.focus(), 50); }
 }

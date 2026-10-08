@@ -2,7 +2,7 @@
 // oder in den gemeinsamen Daten (Admin) und schreibt ins Änderungsprotokoll.
 import { state, update, model, personById, todayIso, uid, COLORS } from './state.js';
 import { inGroup, isAdmin, myPersonId, updateProfile, log } from './account.js';
-import { withPlanVersion, isActive, planFor } from './model.js';
+import { withPlanVersion, isActive, planFor, planOn, absenceOn } from './model.js';
 import { mondayOf, addDays, isoWeek } from './calc.js';
 import { fmtDate } from './ui.js';
 
@@ -69,15 +69,138 @@ const planText = (hin, rueck) => {
   return f(hin) === f(rueck) ? f(hin) : `hin ${f(hin)} · zurück ${f(rueck)}`;
 };
 
-/** Regelplan ändern – gilt ab heute, frühere Tage bleiben unverändert. */
-export function setPlan(pid, hin, rueck) {
+const RHYTHM_TEXT = (r = {}) => (r.mode === 'flex' ? 'nach Absprache'
+  : r.mode === 'weeks' ? (r.weeks?.length ? `${r.weeks.length} ausgewählte Wochen` : `jede ${r.every || 2}. Woche`) : 'jede Woche');
+
+/** Regelplan (Rhythmus) ändern – gilt ab heute, frühere Tage bleiben unverändert. rhythm: { mode, every, anchor, weeks } */
+export function setPlan(pid, hin, rueck, rhythm = {}) {
   const from = todayIso();
+  const at = Date.now();
   if (isMe(pid)) {
-    updateProfile((d) => { d.plan = withPlanVersion(d.plan, from, hin, rueck); });
+    updateProfile((d) => { d.plan = withPlanVersion(d.plan, from, hin, rueck, at, rhythm); });
   } else if (isAdmin()) {
-    update((s) => { const p = sharedPerson(s, pid); p.plan = withPlanVersion(p.plan, from, hin, rueck); });
+    update((s) => { const p = sharedPerson(s, pid); p.plan = withPlanVersion(p.plan, from, hin, rueck, at, rhythm); });
   } else deny();
-  log(`Regelplan von ${nameOf(pid)} ab ${fmtDate(from)}: ${planText(hin, rueck)}`);
+  log(`Rhythmus von ${nameOf(pid)} ab ${fmtDate(from)}: ${RHYTHM_TEXT(rhythm)}${rhythm.mode === 'flex' ? '' : `, ${planText(hin, rueck)}`}`);
+}
+
+// ---------- Abwesenheit (Urlaub, krank …) ----------
+
+const ABS_TEXT = { vacation: 'Urlaub', sick: 'krank', other: 'abwesend' };
+const span = (from, until) => (until && until !== from ? `${fmtDate(from)} – ${fmtDate(until)}${until.slice(0, 4)}` : `${fmtDate(from)}${from.slice(0, 4)}`);
+
+/** Abwesenheit eintragen: an diesen Tagen fährt die Person nicht (zahlt nichts); ist sie Fahrer, fallen ihre Fahrten aus. */
+export function addAbsence(pid, { from, until, reason = 'vacation' }) {
+  if (!from) throw new Error('Bitte angeben, ab wann.');
+  if (until && until < from) throw new Error('„Bis“ liegt vor „von“.');
+  const a = { id: uid(), from, until: until || from, reason, at: Date.now() };
+  if (isMe(pid)) updateProfile((d) => { d.absences = [...(d.absences || []), a]; });
+  else if (isAdmin()) update((s) => { const p = sharedPerson(s, pid); p.absences = [...(p.absences || []), a]; });
+  else deny();
+  log(`${nameOf(pid)}: ${ABS_TEXT[reason] || 'abwesend'} ${span(a.from, a.until)}`);
+  return a;
+}
+
+/** Abwesenheit löschen (nur dort, wo sie eingetragen wurde). */
+export function removeAbsence(pid, id) {
+  const p = personById(pid);
+  const a = (p?.absences || []).find((x) => x.id === id);
+  if (!a) return;
+  if (a.src === 'profile' && isMe(pid)) updateProfile((d) => { d.absences = (d.absences || []).filter((x) => x.id !== id); });
+  else if (a.src !== 'profile' && isAdmin()) update((s) => { const sp = sharedPerson(s, pid); sp.absences = (sp.absences || []).filter((x) => x.id !== id); });
+  else deny();
+  log(`${nameOf(pid)}: Abwesenheit ${span(a.from, a.until)} gelöscht`);
+}
+
+// ---------- Vertretung: „Ich fahre“ ----------
+
+/** Als Fahrer einspringen (oder zurückziehen): an diesen Tagen fahre ich (und fahre damit auch mit). */
+export function volunteerDrive(pid, dates, on = true) {
+  const at = Date.now();
+  const dirs = model().dirs;
+  if (isMe(pid)) {
+    updateProfile((d) => {
+      d.drive ||= {};
+      for (const date of dates) {
+        if (on) d.drive[date] = { ...Object.fromEntries(dirs.map((dir) => [dir, true])), at };
+        else delete d.drive[date];
+      }
+    });
+  } else if (isAdmin()) {
+    update((s) => {
+      for (const date of dates) {
+        const day = (s.days[date] ||= {});
+        day.driver ||= {};
+        day.people ||= {};
+        for (const dir of dirs) { if (on) day.driver[dir] = pid; else delete day.driver[dir]; }
+        if (on) day.people[pid] = { ...(day.people[pid] || {}), ...Object.fromEntries(dirs.map((dir) => [dir, true])), at };
+      }
+    });
+  } else deny();
+  log(`${nameOf(pid)} ${on ? 'fährt' : 'fährt doch nicht'} als Fahrer: ${dates.map((d) => fmtDate(d)).join(', ')}`);
+}
+
+/** Kann fahren (für Vertretungen) + eigenes Auto. car: { consumption, fuel, extraPerKm } oder null */
+export function setDriverInfo(pid, { drives, car } = {}) {
+  const at = Date.now();
+  const patch = (o) => {
+    if (drives !== undefined) o.drives = { value: !!drives, at };
+    if (car !== undefined) o.car = car ? { ...car, at } : { consumption: 0, at };
+  };
+  if (isMe(pid)) updateProfile((d) => patch(d));
+  else if (isAdmin()) update((s) => patch(sharedPerson(s, pid)));
+  else deny();
+  if (drives !== undefined) log(`${nameOf(pid)} ${drives ? 'kann fahren' : 'fährt nicht selbst'}`);
+  if (car) log(`Auto von ${nameOf(pid)}: ${String(car.consumption).replace('.', ',')} l/100 km`);
+}
+
+/** Fahrer-Plan (wer fährt normalerweise) – gilt ab heute. plan: { id } | { mode: 'weekday', ids } | { mode: 'rotate', ids, anchor } */
+export function setDriverPlan(plan) {
+  if (!isAdmin()) deny();
+  const today = todayIso();
+  update((s) => {
+    s.drivers ||= [];
+    if (!s.drivers.length && s.defaultDriver) s.drivers.push({ from: '0000-01-01', id: s.defaultDriver, at: 0 });
+    const v = { from: today, at: Date.now(), ...plan };
+    if (plan.mode === 'rotate') v.anchor = plan.anchor || mondayOf(today);
+    s.drivers = [...s.drivers.filter((x) => x.from !== today), v];
+    if (plan.id) s.defaultDriver = plan.id;
+    else if (plan.ids?.length && !plan.ids.includes(s.defaultDriver)) s.defaultDriver = plan.ids.find(Boolean);
+  });
+  const text = plan.mode === 'weekday' ? `je Wochentag (${plan.ids.map((id, i) => (id ? `${WD[i]} ${nameOf(id)}` : null)).filter(Boolean).join(', ')})`
+    : plan.mode === 'rotate' ? `wochenweise abwechselnd: ${plan.ids.map(nameOf).join(' → ')}` : nameOf(plan.id);
+  log(`Fahrer ab ${fmtDate(today)}: ${text}`);
+}
+
+// ---------- Fahrfreie Zeiten der Gruppe ----------
+
+export function addOffPeriod({ from, until, name }) {
+  if (!isAdmin()) deny();
+  if (!from) throw new Error('Bitte angeben, ab wann.');
+  if (until && until < from) throw new Error('„Bis“ liegt vor „von“.');
+  const x = { id: uid(), from, until: until || from, name: name?.trim() || 'Fahrfrei', at: Date.now() };
+  update((s) => { s.offPeriods = [...(s.offPeriods || []), x]; });
+  log(`Fahrfrei: ${x.name} ${span(x.from, x.until)}`);
+}
+
+export function removeOffPeriod(id) {
+  if (!isAdmin()) deny();
+  const x = (state.offPeriods || []).find((p) => p.id === id);
+  update((s) => { s.offPeriods = (s.offPeriods || []).filter((p) => p.id !== id); });
+  if (x) log(`Fahrfrei gelöscht: ${x.name} ${span(x.from, x.until)}`);
+}
+
+/** Schulferien bzw. Feiertage ein-/ausschalten – gilt ab heute (nicht rückwirkend). kind: 'school' | 'public' */
+export function setFreeDays(kind, enabled) {
+  if (!isAdmin()) deny();
+  const today = todayIso();
+  update((s) => {
+    const hol = { ...(s.holidays || {}) };
+    if (kind === 'public') hol.public = { ...(hol.public || {}), enabled, from: enabled ? today : hol.public?.from, fetchedAt: 0 };
+    else Object.assign(hol, { enabled, from: enabled ? today : hol.from, fetchedAt: 0 });
+    s.holidays = hol;
+  });
+  log(`${kind === 'public' ? 'Feiertage' : 'Schulferien'} ${enabled ? 'fahrfrei' : 'wieder normale Fahrtage'}`);
 }
 
 // ---------- Profil-Angaben ----------
@@ -107,10 +230,10 @@ export function setMyName(name) {
 // ---------- Zahlungen ----------
 
 /** Als bezahlt melden bzw. zurücknehmen. items: [{ key, amount, from, to, week }] */
-export function markPaid(items, paid = true) {
+export function markPaid(items, paid = true, via = null) {
   const at = Date.now();
   const mine = me();
-  const entry = (d) => (paid ? { amount: d.amount, at, by: nameOf(mine), pid: mine } : { revoked: true, at, by: nameOf(mine), pid: mine });
+  const entry = (d) => (paid ? { amount: d.amount, at, by: nameOf(mine), pid: mine, ...(via ? { via } : {}) } : { revoked: true, at, by: nameOf(mine), pid: mine });
   if (isAdmin()) {
     update((s) => { for (const d of items) s.payments[d.key] = entry(d); });
   } else if (items.every((d) => d.from === mine || d.to === mine)) {
@@ -119,7 +242,8 @@ export function markPaid(items, paid = true) {
   const sum = items.reduce((a, d) => a + d.amount, 0).toFixed(2).replace('.', ',');
   const who = [...new Set(items.map((d) => nameOf(d.from)))].join(', ');
   const reported = paid && items.every((d) => d.from === mine);
-  log(paid ? `${who}: ${sum} € ${reported ? 'als bezahlt gemeldet' : 'als bezahlt markiert'} (${items.length} ${items.length === 1 ? 'Woche' : 'Wochen'})` : `${who}: „bezahlt“ zurückgenommen (${sum} €)`);
+  const VIA = { cash: 'bar', paypal: 'PayPal', bank: 'Überweisung' };
+  log(paid ? `${who}: ${sum} € ${reported ? 'als bezahlt gemeldet' : 'als bezahlt markiert'}${via ? ` (${VIA[via] || via})` : ''} (${items.length} ${items.length === 1 ? 'Woche' : 'Wochen'})` : `${who}: „bezahlt“ zurückgenommen (${sum} €)`);
   return reported; // true: wartet noch auf Bestätigung
 }
 
@@ -127,7 +251,7 @@ export function markPaid(items, paid = true) {
 export function confirmPayment(items, ok) {
   const at = Date.now();
   const mine = me();
-  const entry = (d) => (ok ? { amount: d.amount, at, by: nameOf(mine), pid: mine } : { rejected: true, at, by: nameOf(mine), pid: mine });
+  const entry = (d) => (ok ? { amount: d.amount, at, by: nameOf(mine), pid: mine, ...(d.pending?.via ? { via: d.pending.via } : {}) } : { rejected: true, at, by: nameOf(mine), pid: mine });
   if (items.every((d) => d.to === mine) && !isAdmin()) {
     updateProfile((p) => { p.paid ||= {}; for (const d of items) p.paid[d.key] = entry(d); });
   } else if (isAdmin()) {
@@ -139,13 +263,18 @@ export function confirmPayment(items, ok) {
 
 // ---------- Admin: Mitfahrer & Einstellungen ----------
 
+/** Neuen Platz anlegen. Rhythmus wie der Fahrer (sonst Mo–Fr), gilt ab heute – ändern geht jederzeit. */
 export function addPerson(name) {
   if (!isAdmin()) deny();
+  const today = todayIso();
+  const drv = planFor(personById(state.defaultDriver), today);
+  const has = drv.hin.some(Boolean) || drv.rueck.some(Boolean);
+  const week = (arr) => (has ? [...arr] : [true, true, true, true, true, false, false]);
   update((s) => {
     const used = new Set(model().persons.map((p) => p.color));
-    s.persons.push({ id: uid(), name, color: COLORS.find((c) => !used.has(c)) || COLORS[s.persons.length % COLORS.length], plan: [] });
+    s.persons.push({ id: uid(), name, color: COLORS.find((c) => !used.has(c)) || COLORS[s.persons.length % COLORS.length], plan: withPlanVersion([], today, week(drv.hin), week(drv.rueck)) });
   });
-  log(`Mitfahrer „${name}“ angelegt`);
+  log(`Platz „${name}“ angelegt`);
 }
 
 export function setPersonField(pid, field, value, text) {
@@ -210,11 +339,11 @@ export function weekPattern(pid, monday, mode) {
   const out = {};
   for (let k = 0; k < 7; k++) {
     const date = addDays(monday, k);
-    const plan = planFor(personById(pid), date);
+    const plan = planOn(personById(pid), date);
     const patch = {};
     for (const dir of m.dirs) {
       if (mode === 'none') patch[dir] = false;
-      else if (mode === 'plan') patch[dir] = !!plan[dir][k] && !m.holiday(date); // in den Ferien: keine Fahrt
+      else if (mode === 'plan') patch[dir] = !!plan[dir][k] && !m.holiday(date) && !absenceOn(personById(pid), date); // fahrfrei oder abwesend: keine Fahrt
       else if (pid === state.defaultDriver) patch[dir] = k < 5 || !!plan[dir][k];
       // „ganze Woche“: an allen Tagen, an denen gefahren wird (Mo–Fr bzw. wenn der Fahrer fährt)
       else patch[dir] = (k < 5 && !m.dayInfo(date).off) || !!m.dayInfo(date).driver[dir];

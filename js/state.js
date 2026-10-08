@@ -25,7 +25,11 @@ export function defaultState() {
     returnOrder: null,             // Absetz-Reihenfolge von Hand, sonst umgekehrt
     route: null,                   // ganze Route Hinfahrt (für die Karte)
     returnRoute: null,             // ganze Route Rückfahrt (für die Karte)
-    holidays: { enabled: true, region: 'DE-TH', from: '2026-10-07', periods: [], fetchedAt: 0 }, // Schulferien: nach Regelplan keine Fahrten
+    kind: 'school',                // Gruppenart: 'school' (Schule/Ausbildung) | 'work' (Arbeit) | 'other' – Startwerte für Ferien/Feiertage
+    times: { arrive: '', leave: '' }, // Ankunft am Ziel / Abfahrt zurück (für die Abholzeiten), „07:30“
+    // Fahrfreie Zeiten: Schulferien (enabled …) und gesetzliche Feiertage (public) – jeweils erst ab dem Einschalten
+    holidays: { enabled: true, region: 'DE-TH', from: todayIso(), periods: [], fetchedAt: 0, public: { enabled: true, from: todayIso(), periods: [], fetchedAt: 0 } },
+    offPeriods: [],                // eigene fahrfreie Zeiträume der Gruppe [{ id, from, until, name }]
     detours: [],                   // Umleitungen [{ id, dir, lat, lng, place, label, note, from, until, at, by }]
     routeCache: {},                // berechnete Teilstrecken je Stoppfolge
     car: { consumption: 6.5, fuel: 'e10', extraPerKm: 0 },
@@ -69,7 +73,7 @@ export function save() {
 
 /** Daten, die in einer Fahrgemeinschaft geteilt werden (Rest bleibt pro Gerät). */
 export const SHARED_KEYS = ['schema', 'persons', 'defaultDriver', 'drivers', 'destination', 'roundTrip', 'manualKm', 'order', 'optimizedOrder', 'returnOrder',
-  'route', 'returnRoute', 'detours', 'holidays', 'routeCache', 'car', 'price', 'split', 'days', 'weeks', 'payments', 'setupDone', 'setupCar', 'optimizedFor'];
+  'route', 'returnRoute', 'detours', 'holidays', 'offPeriods', 'kind', 'times', 'routeCache', 'car', 'price', 'split', 'days', 'weeks', 'payments', 'setupDone', 'setupCar', 'optimizedFor'];
 
 export function sharedData(s = state) {
   const o = {};

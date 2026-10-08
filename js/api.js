@@ -178,6 +178,15 @@ export async function fetchSchoolHolidays(region, from, to) {
     .sort((a, b) => a.start.localeCompare(b.start));
 }
 
+/** Gesetzliche Feiertage eines Bundeslands (bundesweite + landesweite) → [{ start, end, name }] */
+export async function fetchPublicHolidays(region, from, to) {
+  const params = new URLSearchParams({ countryIsoCode: 'DE', subdivisionCode: region, languageIsoCode: 'DE', validFrom: from, validTo: to });
+  const data = await getJSON(`https://openholidaysapi.org/PublicHolidays?${params}`);
+  return data.filter((x) => x.nationwide || (x.subdivisions || []).some((sd) => sd.code === region))
+    .map((x) => ({ start: x.startDate, end: x.endDate, name: x.name?.find((n) => n.language === 'DE')?.text || x.name?.[0]?.text || 'Feiertag' }))
+    .sort((a, b) => a.start.localeCompare(b.start));
+}
+
 /** Tankstellen im Umkreis (max. 25 km). */
 export async function fetchStations(lat, lng, rad, apiKey) {
   const params = new URLSearchParams({ lat, lng, rad: Math.min(25, rad), sort: 'dist', type: 'all', apikey: apiKey });

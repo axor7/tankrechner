@@ -163,6 +163,40 @@ export function resolveLegs(trip, snap, direction = 'hin') {
   return { auto: true, legs, stops, key, estimated: dist !== known };
 }
 
+/** „07:30“ → 450 (Minuten nach Mitternacht) oder null */
+export function parseTime(t) {
+  const m = String(t || '').match(/^(\d{1,2}):(\d{2})$/);
+  return m ? Number(m[1]) * 60 + Number(m[2]) : null;
+}
+
+/** 450 → „07:30“ */
+export const fmtTime = (min) => {
+  const v = ((Math.round(min) % 1440) + 1440) % 1440;
+  return `${String(Math.floor(v / 60)).padStart(2, '0')}:${String(v % 60).padStart(2, '0')}`;
+};
+
+/**
+ * Uhrzeiten an den Stopps einer Fahrt. legs: Teilstrecken in Fahrtrichtung mit Minuten (resolveLegs).
+ * Hinfahrt: rückwärts von der Ankunftszeit am Ziel (arrive) · Rückfahrt: vorwärts ab der Abfahrt am Ziel (leave).
+ * stopMin: Minuten je Zwischenhalt (Einsteigen). → [Minuten nach Mitternacht je Stopp] oder null ohne Zeit.
+ */
+export function stopTimes(legs, direction, { arrive, leave } = {}, stopMin = 1) {
+  const n = legs.length;
+  if (direction === 'rueck') {
+    const start = parseTime(leave);
+    if (start == null) return null;
+    const out = [start];
+    for (let i = 0; i < n; i++) out.push(out[i] + (legs[i].min || 0) + (i > 0 ? stopMin : 0));
+    return out;
+  }
+  const end = parseTime(arrive);
+  if (end == null) return null;
+  const out = Array(n + 1);
+  out[n] = end;
+  for (let i = n - 1; i >= 0; i--) out[i] = out[i + 1] - (legs[i].min || 0) - (i < n - 1 ? stopMin : 0);
+  return out;
+}
+
 /**
  * Berechnet eine einzelne Fahrt.
  * opts.mode: 'segment' (jede Teilstrecke wird unter den dort Mitfahrenden geteilt)

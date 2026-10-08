@@ -1,6 +1,8 @@
 // Datenmodell v2 (reine Logik, ohne DOM – wird getestet).
 //
-// Wer fährt wann? = Regelplan der Person (gilt ab einem Datum) + einzelne Tagesänderungen.
+// Wer fährt wann? Von oben nach unten, die jüngere Angabe gewinnt:
+//   einzelner Tag (selbst oder vom Fahrer eingetragen) · Abwesenheit (Urlaub, krank …) ·
+//   fahrfreie Zeit (Schulferien, Feiertage, eigene Zeiträume) · Rhythmus (immer / bestimmte Wochen / nach Absprache).
 // Daten kommen aus zwei Quellen:
 //   • gemeinsame Daten (nur Admins ändern): Personen, Ziel, Auto, Tage (Admin-Änderungen), Zahlungen …
 //   • Mitglieder-Profile (jeder nur sein eigenes): Adresse, Regelplan, eigene Tage, „bezahlt“-Meldungen
@@ -20,7 +22,7 @@ const EMPTY_WEEK = () => Array(7).fill(false);
  */
 export function mergePersons(persons = [], profiles = []) {
   // Früheres „inaktiv“ gibt es nicht mehr (galt rückwirkend) – wer nicht mitfährt, hat keine Tage im Regelplan
-  const out = persons.map(({ active, ...p }) => ({ ...p, plan: [...(p.plan || [])] }));
+  const out = persons.map(({ active, ...p }) => ({ ...p, plan: [...(p.plan || [])], absences: (p.absences || []).map((a) => ({ ...a, src: 'shared' })) }));
   const byId = new Map(out.map((p) => [p.id, p]));
   for (const pr of profiles) {
     if (!pr.personId) continue;
@@ -35,6 +37,9 @@ export function mergePersons(persons = [], profiles = []) {
     }
     p.userId = pr.userId;
     if (d.address) p.address = newer(p.address, d.address);
+    if (d.absences?.length) p.absences = [...(p.absences || []), ...d.absences.map((a) => ({ ...a, src: 'profile' }))];
+    if (d.drives) p.drives = newer(p.drives, d.drives);
+    if (d.car) p.car = newer(p.car, d.car);
     if (d.plan?.length) p.plan = [...p.plan, ...d.plan];
     if (d.paypal) p.paypal = (d.paypal.at || 0) >= (p.paypalAt || 0) ? d.paypal.name : p.paypal;
     if (d.name && p.self) p.name = d.name;
@@ -43,30 +48,92 @@ export function mergePersons(persons = [], profiles = []) {
   return out;
 }
 
-/** Regelplan einer Person an einem Tag: die jüngste Version, die schon gilt. */
-export function planFor(p, date) {
+/** Gültige Regelplan-Version an einem Tag (die jüngste, die schon gilt) oder null. */
+export function planVersion(p, date) {
   let best = null;
   for (const v of p?.plan || []) {
     if (v.from > date) continue;
     if (!best || v.from > best.from || (v.from === best.from && (v.at || 0) >= (best.at || 0))) best = v;
   }
-  return best ? { hin: best.hin || EMPTY_WEEK(), rueck: best.rueck || EMPTY_WEEK() } : { hin: EMPTY_WEEK(), rueck: EMPTY_WEEK() };
+  return best;
+}
+
+/** Wochentage des Regelplans (ohne Rücksicht auf den Rhythmus): { hin: [7], rueck: [7], mode, … } */
+export function planFor(p, date) {
+  const best = planVersion(p, date);
+  return best ? { ...best, hin: best.hin || EMPTY_WEEK(), rueck: best.rueck || EMPTY_WEEK(), mode: best.mode || 'always' } : { hin: EMPTY_WEEK(), rueck: EMPTY_WEEK(), mode: 'always' };
+}
+
+/** Wochen zwischen zwei Montagen (kann negativ sein). */
+const weeksBetween = (a, b) => Math.round((Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / (7 * 864e5));
+
+/**
+ * Fällt diese Woche in den Rhythmus? always: jede Woche · weeks: jede n-te Woche ab anchor oder nur die gewählten Wochen ·
+ * flex (nach Absprache): nie – jede Fahrt wird einzeln eingetragen.
+ */
+export function weekInRhythm(v, monday) {
+  const mode = v?.mode || 'always';
+  if (mode === 'flex') return false;
+  if (mode !== 'weeks') return true;
+  if (v.weeks?.length) return v.weeks.includes(monday);
+  const every = Math.max(1, Number(v.every) || 2);
+  const k = weeksBetween(v.anchor || mondayOf(v.from), monday);
+  return ((k % every) + every) % every === 0;
+}
+
+/** Regelplan an genau diesem Tag (mit Rhythmus): { hin: [7], rueck: [7] } – leer, wenn die Woche nicht dran ist. */
+export function planOn(p, date) {
+  const v = planFor(p, date);
+  return weekInRhythm(v, mondayOf(date)) ? { hin: v.hin, rueck: v.rueck } : { hin: EMPTY_WEEK(), rueck: EMPTY_WEEK() };
+}
+
+/** Abwesenheit an diesem Tag (die jüngste, falls mehrere) oder null. */
+export function absenceOn(p, date) {
+  let best = null;
+  for (const a of p?.absences || []) if (!a.deleted && a.from <= date && date <= (a.until || a.from) && (!best || (a.at || 0) > (best.at || 0))) best = a;
+  return best;
 }
 
 export const hasPlan = (p) => (p?.plan || []).length > 0;
 
-/** Neue Regelplan-Version ab `from` (ersetzt eine Version mit demselben Startdatum). */
-export function withPlanVersion(plan = [], from, hin, rueck, at = Date.now()) {
-  return [...plan.filter((v) => v.from !== from), { from, hin: [...hin], rueck: [...rueck], at }];
+/**
+ * Neue Regelplan-Version ab `from` (ersetzt eine Version mit demselben Startdatum).
+ * rhythm: { mode: 'always' | 'weeks' | 'flex', every, anchor, weeks }
+ */
+export function withPlanVersion(plan = [], from, hin, rueck, at = Date.now(), rhythm = {}) {
+  const v = { from, hin: [...hin], rueck: [...rueck], at };
+  if (rhythm.mode && rhythm.mode !== 'always') {
+    v.mode = rhythm.mode;
+    if (rhythm.mode === 'weeks') {
+      if (rhythm.weeks?.length) v.weeks = [...rhythm.weeks].sort();
+      else { v.every = Math.max(2, Number(rhythm.every) || 2); v.anchor = rhythm.anchor || mondayOf(from); }
+    }
+  }
+  return [...plan.filter((x) => x.from !== from), v];
 }
 
 // ---------- Tage ----------
 
-/** Wer war an diesem Tag der (normale) Fahrer? Fahrerwechsel gelten erst ab ihrem Datum. */
-export function driverAt(shared, date) {
+/** Gültige Version des Fahrer-Plans an einem Tag (oder null). */
+export function driverPlanAt(shared, date) {
   let best = null;
   for (const v of shared.drivers || []) if (v.from <= date && (!best || v.from > best.from || (v.from === best.from && (v.at || 0) >= (best.at || 0)))) best = v;
-  return best ? best.id : shared.defaultDriver;
+  return best;
+}
+
+/**
+ * Wer ist an diesem Tag der normale Fahrer? Fahrer-Plan (gilt ab seinem Datum):
+ *   { id } immer dieselbe Person · { mode: 'weekday', ids: [7] } je Wochentag · { mode: 'rotate', ids: [...], anchor } wochenweise abwechselnd
+ */
+export function driverAt(shared, date) {
+  const v = driverPlanAt(shared, date);
+  if (!v) return shared.defaultDriver;
+  if (v.mode === 'weekday') return v.ids?.[weekdayIndex(date)] || v.id || shared.defaultDriver;
+  if (v.mode === 'rotate' && v.ids?.length) {
+    const k = weeksBetween(v.anchor || mondayOf(v.from), mondayOf(date));
+    return v.ids[((k % v.ids.length) + v.ids.length) % v.ids.length];
+  }
+  return v.id || shared.defaultDriver;
 }
 
 
@@ -79,36 +146,62 @@ export function buildModel(shared, profiles = []) {
   const byId = new Map(persons.map((p) => [p.id, p]));
   const days = shared.days || {};
   const profileDays = new Map(); // personId → { date → {hin, rueck, at} }
-  for (const pr of profiles) if (pr.personId && pr.data?.days) profileDays.set(pr.personId, pr.data.days);
+  const profileDrive = new Map(); // personId → { date → {hin, rueck, at} } – „ich fahre“ (Vertretung)
+  for (const pr of profiles) {
+    if (!pr.personId) continue;
+    if (pr.data?.days) profileDays.set(pr.personId, pr.data.days);
+    if (pr.data?.drive) profileDrive.set(pr.personId, pr.data.drive);
+  }
   const dirsAll = shared.roundTrip === false ? ['hin'] : DIRECTIONS;
 
-  const holiday = (date) => holidayOn(shared.holidays, date);
+  /** Fahrfreie Zeit an diesem Tag (Schulferien, Feiertag, eigener Zeitraum) → { name, kind } oder null. */
+  const holiday = (date) => freeOn(shared, date);
 
-  /** Fährt Person pid an diesem Tag in diese Richtung mit? */
-  function rides(pid, date, dir) {
+  /**
+   * Fährt Person pid an diesem Tag in diese Richtung mit? → { value, why }
+   * why: 'day' (einzeln eingetragen), 'drive' (fährt als Vertretung), 'absent', 'free', 'plan', 'removed', 'off'
+   */
+  function ridesWhy(pid, date, dir) {
     const day = days[date];
-    if (day?.off) return false;
+    if (day?.off) return { value: false, why: 'off' };
     const p = byId.get(pid);
-    if (p?.archived && p.archivedFrom && date >= p.archivedFrom) return false; // entfernt: ab dann nie mehr dabei
-    // In den Schulferien fährt nach Regelplan niemand – wer trotzdem fährt, trägt den Tag selbst ein (geht vor)
-    let value = !!(p && planFor(p, date)[dir][weekdayIndex(date)]) && !holiday(date);
+    if (p?.archived && p.archivedFrom && date >= p.archivedFrom) return { value: false, why: 'removed' }; // entfernt: ab dann nie mehr dabei
+    // Rhythmus – in fahrfreien Zeiten fährt danach niemand
+    const free = holiday(date);
+    let value = !!(p && planOn(p, date)[dir][weekdayIndex(date)]) && !free;
+    let why = free && p && planOn(p, date)[dir][weekdayIndex(date)] ? 'free' : 'plan';
     let at = -1;
+    // Abwesenheit, einzelne Tage, Vertretung: die jüngste Angabe gewinnt
+    const abs = absenceOn(p, date);
+    if (abs) { value = false; why = 'absent'; at = abs.at || 0; }
     for (const e of [day?.people?.[pid], profileDays.get(pid)?.[date]]) {
-      if (e && e[dir] !== undefined && (e.at || 0) >= at) { value = !!e[dir]; at = e.at || 0; }
+      if (e && e[dir] !== undefined && (e.at || 0) >= at) { value = !!e[dir]; why = 'day'; at = e.at || 0; }
     }
-    return value;
+    const dr = profileDrive.get(pid)?.[date];
+    if (dr?.[dir] && (dr.at || 0) >= at) { value = true; why = 'drive'; }
+    return { value, why };
   }
+  const rides = (pid, date, dir) => ridesWhy(pid, date, dir).value;
 
-  /** Alles zu einem Tag: frei?, wer fährt hin/zurück, wer ist Fahrer. */
+  /** Wer kann fahren? (Hauptfahrer, als Fahrer markierte Personen, Fahrer im Fahrer-Plan) */
+  const canDrive = (p) => isActive(p) && (p.id === shared.defaultDriver || p.drives?.value === true || p.drives === true
+    || (shared.drivers || []).some((v) => v.id === p.id || v.ids?.includes(p.id)));
+
+  /** Alles zu einem Tag: frei?, wer fährt hin/zurück, wer ist Fahrer, wer wäre normal Fahrer. */
   function dayInfo(date) {
     const day = days[date] || {};
-    const info = { date, off: !!day.off, riders: {}, driver: {} };
+    const info = { date, off: !!day.off, riders: {}, driver: {}, regular: driverAt(shared, date), free: holiday(date), substitute: {} };
     for (const dir of dirsAll) {
       const riders = persons.filter((p) => rides(p.id, date, dir)).map((p) => p.id);
       let driver = day.driver?.[dir];
       if (driver && !riders.includes(driver)) driver = null;
-      const regular = driverAt(shared, date);
-      if (!driver && riders.includes(regular)) driver = regular;
+      if (!driver && riders.includes(info.regular)) driver = info.regular;
+      if (!driver) {
+        // Vertretung: wer sich als Fahrer eingetragen hat (der zuerst gemeldete)
+        const vol = persons.map((p) => ({ id: p.id, e: profileDrive.get(p.id)?.[date] }))
+          .filter((x) => x.e?.[dir] && riders.includes(x.id)).sort((a, b) => (a.e.at || 0) - (b.e.at || 0))[0];
+        if (vol) { driver = vol.id; info.substitute[dir] = true; }
+      }
       info.riders[dir] = riders;
       info.driver[dir] = riders.length ? driver || null : null;
     }
@@ -130,10 +223,11 @@ export function buildModel(shared, profiles = []) {
     for (const p of persons) for (const v of p.plan || []) dates.push(v.from);
     dates.push(...Object.keys(days));
     for (const d of profileDays.values()) dates.push(...Object.keys(d));
+    for (const d of profileDrive.values()) dates.push(...Object.keys(d));
     return dates.length ? dates.sort()[0] : null;
   }
 
-  return { persons, byId, rides, dayInfo, trip, startDate, holiday, dirs: dirsAll, shared };
+  return { persons, byId, rides, ridesWhy, dayInfo, trip, startDate, holiday, canDrive, dirs: dirsAll, shared };
 }
 
 // ---------- Woche: Werte & virtuelle Strecke ----------
@@ -155,10 +249,32 @@ export function liveWeekSnap(shared, persons, price) {
     returnOrder: shared.returnOrder || null,
     manualKm: Number(shared.manualKm) || 0,
     split: { ...(shared.split || {}) },                 // Aufteilungsregel gilt pro Woche
+    cars: carsOf(persons),                              // eigenes Auto je Fahrer (sonst das der Gruppe)
+    prices: { ...(shared.price?.byFuel || {}) },        // Preis je Kraftstoff (für Fahrer mit anderem Sprit)
     // Umleitungen (gelten je Datum von–bis; eingefrorene Wochen behalten ihre)
     detours: (shared.detours || []).filter((d) => d?.lat != null).map(({ id, dir, lat, lng, bearing, place, from, until, use }) => ({ id, dir, lat, lng, bearing, place, from, until, use })),
     at: Date.now(),
   };
+}
+
+/** Eigene Autos der Fahrer: { pid: { consumption, fuel, extraPerKm } } (nur vollständige Angaben). */
+export function carsOf(persons) {
+  const out = {};
+  for (const p of persons) {
+    const c = p.car;
+    if (c && Number(c.consumption) > 0) out[p.id] = { consumption: Number(c.consumption), fuel: c.fuel || null, extraPerKm: c.extraPerKm != null && c.extraPerKm !== '' ? Number(c.extraPerKm) : null };
+  }
+  return out;
+}
+
+/** Werte des Autos, mit dem diese Fahrt gefahren wird (eigenes Auto des Fahrers, sonst das der Gruppe). */
+export function carFor(week, driver) {
+  const base = { consumption: week.consumption, price: week.price, extraPerKm: week.extraPerKm, fuel: week.fuel };
+  const c = week.cars?.[driver];
+  if (!c) return base;
+  const fuel = c.fuel || base.fuel;
+  const price = fuel === base.fuel ? base.price : Number(week.prices?.[fuel]) || base.price;
+  return { consumption: c.consumption, price, extraPerKm: c.extraPerKm ?? base.extraPerKm, fuel };
 }
 
 /** Abholreihenfolge: von Hand festgelegt, sonst die berechnete beste, sonst in Listenreihenfolge. */
@@ -183,11 +299,31 @@ export function holidayOn(hol, date) {
   return (hol.periods || []).find((p) => p.start <= date && date <= p.end) || null;
 }
 
+/** Gesetzlicher Feiertag (wenn eingeschaltet, ab dem Einschalten) → { start, end, name } oder null. */
+export function publicHolidayOn(hol, date) {
+  const pub = hol?.public;
+  if (!pub?.enabled || (pub.from && date < pub.from)) return null;
+  return (pub.periods || []).find((p) => p.start <= date && date <= p.end) || null;
+}
+
+/**
+ * Fahrfreie Zeit an diesem Tag: Schulferien, gesetzlicher Feiertag oder eigener Zeitraum der Gruppe
+ * (z. B. Betriebsferien) → { name, kind: 'school' | 'public' | 'custom', start, end } oder null.
+ */
+export function freeOn(shared, date) {
+  const custom = (shared.offPeriods || []).find((p) => !p.deleted && p.from <= date && date <= (p.until || p.from));
+  if (custom) return { name: custom.name || 'Fahrfrei', kind: 'custom', start: custom.from, end: custom.until || custom.from, id: custom.id };
+  const pub = publicHolidayOn(shared.holidays, date);
+  if (pub) return { ...pub, kind: 'public' };
+  const school = holidayOn(shared.holidays, date);
+  return school ? { ...school, kind: 'school' } : null;
+}
+
 /** Umleitungen, die an diesem Tag gefahren werden (von–bis, beide Tage eingeschlossen; Varianten mit use: false nicht). */
 export const activeDetours = (detours, date) => (detours || []).filter((d) => d?.lat != null && d.use !== false && (!d.from || d.from <= date) && (!d.until || date <= d.until));
 
 export function tripSnap(week, trip, routes = {}, names = {}, date = null) {
-  const base = { consumption: week.consumption, price: week.price, extraPerKm: week.extraPerKm, fuel: week.fuel, split: week.split };
+  const base = { ...carFor(week, trip.driver), split: week.split };
   const a = week.addresses || {};
   const start = a[trip.driver];
   const dest = week.destination;

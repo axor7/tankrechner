@@ -1,4 +1,5 @@
-// Ansicht „Strecke“: Hin-/Rückfahrt, Sperrungen & Baustellen, Umleitungen; für Admins zusätzlich Ziel, Start und Reihenfolge.
+// Ansicht „Karte“: Hin-/Rückfahrt, Sperrungen & Baustellen, Umleitungen; für Admins zusätzlich Ziel, Start und Reihenfolge.
+// Von hier aus: Einzelfahrt berechnen und (Admin) Spritpreis & Tankstellen.
 import { state, update, model, personById, todayIso } from './state.js';
 import { effectiveOrder, isActive } from './model.js';
 import { isAdmin } from './account.js';
@@ -372,7 +373,7 @@ function adminRouteView(el, c) {
       addressInput({ value: driver?.address, placeholder: 'Startadresse', allowLocate: true, onSelect: (a) => safe(() => setAddress(state.defaultDriver, a)), focusKey: 'start' })),
     h('section', { class: 'card' },
       h('div', { class: 'row between' }, h('h2', {}, 'Abholreihenfolge'), manual ? h('span', { class: 'claim-badge' }, 'von Hand') : pickups.length > 1 ? h('span', { class: 'claim-badge me' }, 'optimiert') : null),
-      pickups.length ? orderList(pickups, move) : h('p', { class: 'hint' }, 'Noch keine Abholadressen. Mitfahrer tragen ihre Adresse selbst ein (oder du unter Einstellungen → Mitfahrer).'),
+      pickups.length ? orderList(pickups, move) : h('p', { class: 'hint' }, 'Noch keine Abholadressen. Mitfahrer tragen ihre Adresse selbst ein (oder du unter Profil → Mitfahrer).'),
       noAddr.length ? h('p', { class: 'hint small' }, `Ohne Adresse (steigen beim Start zu): ${noAddr.map((p) => p.name).join(', ')}`) : null,
       pickups.length > 1 ? h('div', { class: 'row gap wrap' },
         h('button', {
@@ -442,15 +443,22 @@ function memberRouteView(el, c) {
 
 export function renderRouteView(el, c) {
   const admin = isAdmin();
-  const subs = admin ? [['route', 'Route'], ['fuel', 'Spritpreis'], ['single', 'Einzelfahrt']] : [['route', 'Unsere Strecke'], ['single', 'Einzelfahrt']];
-  const sub = subs.some(([k]) => k === state.ui.routeSub) ? state.ui.routeSub : 'route';
-  el.append(h('div', { class: 'segmented' }, subs.map(([k, label]) => h('button', {
-    type: 'button', class: sub === k ? 'active' : '', onclick: () => update((s) => { s.ui.routeSub = k; }),
-  }, label))));
-  if (sub === 'single') renderSingleTrip(el, c);
+  const sub = ['single', 'fuel'].includes(state.ui.routeSub) && (state.ui.routeSub !== 'fuel' || admin) ? state.ui.routeSub : 'route';
+  const back = (label) => h('button', { type: 'button', class: 'back-link', onclick: () => update((s) => { s.ui.routeSub = 'route'; }) }, icon('chevron-left', { size: 18 }), label);
+  if (sub === 'single') { el.append(back('Unsere Strecke')); renderSingleTrip(el, c); }
+  else if (sub === 'fuel') { el.append(back('Unsere Strecke')); el.append(...[priceCard(c.map), costCard(), timeCard()].filter(Boolean)); }
   else if (!admin) memberRouteView(el, c);
-  else if (sub === 'route') adminRouteView(el, c);
-  else el.append(...[priceCard(c.map), costCard(), timeCard()].filter(Boolean));
+  else adminRouteView(el, c);
+  if (sub === 'route') {
+    el.append(h('div', { class: 'list' },
+      h('button', { type: 'button', class: 'list-row has-sq', onclick: () => update((s) => { s.ui.routeSub = 'single'; }) },
+        h('span', { class: 'sq sq-indigo' }, icon('navigation', { size: 15 })),
+        h('span', { class: 'grow' }, h('span', { class: 'title' }, 'Einzelfahrt berechnen'), h('span', { class: 'sub' }, 'Was kostet eine Fahrt, wie viel Sprit braucht sie?')),
+        h('span', { class: 'chev' }, icon('chevron-right', { size: 18 }))),
+      admin ? h('button', { type: 'button', class: 'list-row has-sq', onclick: () => update((s) => { s.ui.routeSub = 'fuel'; }) },
+        h('span', { class: 'sq sq-orange' }, icon('fuel', { size: 15 })),
+        h('span', { class: 'grow' }, h('span', { class: 'title' }, 'Spritpreis & Tankstellen'), h('span', { class: 'sub' }, 'Preise an der Strecke, beste Tankzeit')),
+        h('span', { class: 'chev' }, icon('chevron-right', { size: 18 }))) : null));
+  }
   if (!state.ui.showMap) el.append(h('button', { type: 'button', class: 'btn', onclick: c.toggleMap }, icon('map', { size: 18 }), 'Karte einblenden'));
 }
-
