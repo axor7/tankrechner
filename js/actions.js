@@ -2,7 +2,7 @@
 // oder in den gemeinsamen Daten (Admin) und schreibt ins Änderungsprotokoll.
 import { state, update, model, personById, todayIso, uid, COLORS } from './state.js';
 import { inGroup, isAdmin, myPersonId, updateProfile, log } from './account.js';
-import { withPlanVersion, isActive, planFor, planOn, absenceOn } from './model.js';
+import { withPlanVersion, planFor, planOn, absenceOn } from './model.js';
 import { mondayOf, addDays, isoWeek } from './calc.js';
 import { fmtDate } from './ui.js';
 
@@ -270,11 +270,13 @@ export function addPerson(name) {
   const drv = planFor(personById(state.defaultDriver), today);
   const has = drv.hin.some(Boolean) || drv.rueck.some(Boolean);
   const week = (arr) => (has ? [...arr] : [true, true, true, true, true, false, false]);
+  const id = uid();
   update((s) => {
     const used = new Set(model().persons.map((p) => p.color));
-    s.persons.push({ id: uid(), name, color: COLORS.find((c) => !used.has(c)) || COLORS[s.persons.length % COLORS.length], plan: withPlanVersion([], today, week(drv.hin), week(drv.rueck)) });
+    s.persons.push({ id, name, color: COLORS.find((c) => !used.has(c)) || COLORS[s.persons.length % COLORS.length], plan: withPlanVersion([], today, week(drv.hin), week(drv.rueck)) });
   });
   log(`Platz „${name}“ angelegt`);
+  return id;
 }
 
 export function setPersonField(pid, field, value, text) {

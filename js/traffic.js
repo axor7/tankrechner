@@ -9,6 +9,14 @@ const KINDS = { CLOSURE: 'closure', CLOSURE_ENTRY_EXIT: 'ramp', ROADWORKS: 'road
 export const KIND_LABEL = { closure: 'Sperrung', ramp: 'Auf-/Abfahrt gesperrt', roadworks: 'Baustelle', short: 'Kurzzeitbaustelle' };
 export const isClosure = (item) => item.kind === 'closure' || item.kind === 'ramp';
 
+/** Lesbarer Titel: „A8 | Karlsruhe - Pforzheim“ → „Karlsruhe – Pforzheim“, Auffahrten aus dem Untertitel, interne Kennungen weg. */
+export function cleanTitle(it) {
+  const ramp = it.kind === 'ramp' && (it.subtitle || '').match(/^(?:Von\s+)?(?:Auffahrt auf die A\d+:\s*)?AS\s+(.+?)\s*(?:\(aus Richtung\s+(.+?)\))?\s*nach\s+(A\s?\d+)/i);
+  if (ramp) return `Auffahrt ${ramp[1]} auf die ${ramp[3].replace(/\s/, '')}`;
+  const t = it.title.replace(/^A\d+\s*\|\s*/, '').replace(/^A\d+\s+/, '').replace(/\b[A-Z]{2}_\d{4}-\S+\s*/g, '').replace(/_/g, ' ').replace(/ - /g, ' – ').trim();
+  return t || it.title;
+}
+
 /** Straßennummern aus dem Routenplaner ("A 8;E 52", "B 10") → Autobahnen der API ("A8"). */
 export function autobahnRefs(refs) {
   const out = new Set();

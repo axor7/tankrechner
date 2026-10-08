@@ -1,5 +1,5 @@
 // Zustand der App + Speicherung im Browser (localStorage).
-import { mondayOf, toISODate } from './calc.js';
+import { toISODate } from './calc.js';
 import { buildModel, migrateV1, liveWeekSnap, isActive } from './model.js';
 
 const KEY = 'tankrechner:v1';
@@ -46,7 +46,7 @@ export function defaultState() {
     localRoutes: {},
     profiles: [],                  // Profile der Mitfahrer (aus der Fahrgemeinschaft geladen)
     log: [],                       // Änderungsprotokoll ohne Fahrgemeinschaft
-    ui: { tab: 'home', week: mondayOf(todayIso()), showWeekend: false, detail: 'simple', me: null, routeSub: 'route', welcomeDone: false },
+    ui: { screen: 'rides', showWeekend: false, me: null, welcomeDone: false },
   };
 }
 

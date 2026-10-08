@@ -23,6 +23,8 @@ export function loadExample() {
   s.car = { consumption: 6.5, fuel: 'e10', extraPerKm: 0 };
   s.price = { ...s.price, mode: 'manual', manual: 1.749 };
   s.setupDone = true;
+  s.kind = 'work';
+  s.times = { arrive: '07:45', leave: '16:30' };
   s.setupCar = true;
   // Ein paar Ausnahmen: Ben letzte Woche am Mittwoch nicht dabei, Tom kommt nächste Woche Freitag mit
   const last = addDays(mondayOf(todayIso()), -7);

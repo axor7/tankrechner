@@ -3,60 +3,24 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <title>Tankrechner – Fahrgemeinschaft fair teilen</title>
-  <meta name="description" content="Route mit Zwischenstopps planen, aktuelle Spritpreise nutzen und Tankkosten fair auf wechselnde Mitfahrer aufteilen.">
-  <meta name="theme-color" content="#f2f2f7" media="(prefers-color-scheme: light)">
+  <title>Tankrechner</title>
+  <meta name="description" content="Fahrgemeinschaft planen und Spritkosten fair teilen.">
+  <meta name="theme-color" content="#f5f5f7" media="(prefers-color-scheme: light)">
   <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <meta name="apple-mobile-web-app-title" content="Tankrechner">
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%23007aff'/><text x='50' y='68' font-size='56' text-anchor='middle'>⛽</text></svg>">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='22' fill='%230a7cff'/><text x='50' y='68' font-size='56' text-anchor='middle'>⛽</text></svg>">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css">
-  <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="css/app.css">
   <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js" defer></script>
-  <script type="module" src="js/app.js"></script>
+  <script type="module" src="js/main.js"></script>
 </head>
-<body data-view="home">
-  <div class="app">
-    <!-- Seitenleiste (Tablet & Computer) -->
-    <nav class="sidebar" aria-label="Navigation">
-      <div class="sidebar-brand">
-        <span class="app-icon" aria-hidden="true">⛽</span>
-        <div><strong>Tankrechner</strong><small>Fahrgemeinschaft fair teilen</small></div>
-      </div>
-      <div id="nav-side" class="nav-list"></div>
-      <button type="button" id="btn-profile-side" class="profile-side" aria-label="Profil und Gruppe"></button>
-    </nav>
-
-    <main class="main">
-      <header class="navbar">
-        <div class="navbar-inner">
-          <div class="title-wrap"><small id="view-sub"></small><h1 id="view-title">Heute</h1></div>
-          <div class="navbar-actions">
-            <button type="button" id="btn-map" class="icon-btn tinted" aria-label="Karte ein-/ausblenden"></button>
-            <button type="button" id="btn-plus" class="icon-btn tinted" aria-label="Neu: Einzelfahrt, Abwesenheit, Tag ändern …"><span class="ic"><svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg></span></button>
-            <button type="button" id="btn-profile" class="profile-btn" aria-label="Profil und Gruppe"></button>
-          </div>
-        </div>
-      </header>
-      <div id="view" class="view"></div>
-      <footer class="foot">
-        <span data-version></span><br>
-        Ohne Anmeldung bleiben alle Daten in deinem Browser. Karte © OpenStreetMap-Mitwirkende · Routing OSRM & Valhalla (FOSSGIS) · Adresssuche Photon · Spritpreise tankerkoenig.de (CC BY 4.0) · Verkehrsmeldungen Autobahn GmbH des Bundes · Schulferien & Feiertage OpenHolidays · QR-Code qrcode-generator (MIT) · Symbole Lucide (ISC)
-      </footer>
-    </main>
-
-    <aside class="map-pane" aria-label="Karte">
-      <div id="map"></div>
-      <div class="map-loading">Route wird berechnet …</div>
-    </aside>
-  </div>
-
-  <!-- Tab-Leiste (Handy) -->
-  <nav id="nav-tabs" class="tabbar" aria-label="Navigation"></nav>
-
-  <dialog id="account-dialog" aria-label="Konto und Fahrgemeinschaft"></dialog>
-  <dialog id="day-dialog" class="sheet-dialog" aria-label="Fenster"></dialog>
-  <input type="file" id="file-import" accept="application/json,.json" hidden>
+<body>
+  <nav id="rail" class="rail" aria-label="Navigation"></nav>
+  <main id="screen" class="screen"></main>
+  <div id="map-host" class="map-host" aria-label="Karte"><div id="map"></div></div>
+  <nav id="tabs" class="tabs" aria-label="Navigation"></nav>
+  <dialog id="sheet" class="sheet"></dialog>
 </body>
 </html>
