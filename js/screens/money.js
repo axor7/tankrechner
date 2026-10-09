@@ -12,6 +12,57 @@ import { fmtEuro, fmtKm, fmtDate } from '../ui.js';
 import { calcSheetRow } from './tripcalc.js';
 
 const VIA = { cash: 'Bar', paypal: 'PayPal', bank: 'Überweisung' };
+
+// ---------- PayPal: Betrag kopieren, kurz zeigen, dann öffnen ----------
+// Die PayPal-App übernimmt den Betrag aus dem Link oft nicht. Deshalb liegt er beim Öffnen schon in der
+// Zwischenablage – in PayPal einfach ins Betragsfeld einfügen.
+
+const PP_DELAY = 700; // ms – lang genug zum Lesen, kurz genug, dass der Browser das Öffnen noch erlaubt
+const PP_SHOW = 6000; // so lange bleibt der Knopf grün
+const ppCopied = { key: null, until: 0, ok: true };
+
+async function copyQuiet(text) {
+  try { await navigator.clipboard.writeText(text); return true; } catch { /* ältere Browser */ }
+  try {
+    const ta = h('textarea', { readonly: true, style: { position: 'fixed', top: '0', opacity: '0' } });
+    ta.value = text;
+    (document.querySelector('dialog[open]') || document.body).append(ta); // außerhalb eines offenen Fensters wäre es gesperrt
+    ta.focus();
+    ta.setSelectionRange(0, text.length);
+    const ok = document.execCommand('copy');
+    ta.remove();
+    return ok;
+  } catch { return false; }
+}
+
+function openLink(link) {
+  const w = window.open(link, '_blank');
+  if (w) w.opener = null;
+  else location.href = link; // Fenster blockiert → im selben Tab
+}
+
+function paypalButton(key, amount, link, onPicked) {
+  const copied = ppCopied.key === key && Date.now() < ppCopied.until;
+  const done = (ok) => [icon('check', { size: 19 }), h('span', { class: 'btn-lines' },
+    h('span', {}, ok ? `${fmtEuro(amount)} kopiert` : 'PayPal öffnet sich …'),
+    h('small', {}, ok ? 'PayPal öffnet sich – Betrag dort einfügen' : `Betrag: ${fmtEuro(amount)}`))];
+  if (copied) return h('button', { type: 'button', class: 'btn success full', onclick: () => openLink(link) }, ...done(ppCopied.ok));
+  return h('button', {
+    type: 'button', class: 'btn primary full',
+    onclick: async (e) => {
+      const el = e.currentTarget;
+      const copying = copyQuiet(amount.toFixed(2).replace('.', ','));
+      Object.assign(ppCopied, { key, until: Date.now() + PP_SHOW, ok: true });
+      el.classList.replace('primary', 'success');
+      el.replaceChildren(...done(true));
+      const ok = await copying;
+      if (!ok) { ppCopied.ok = false; el.replaceChildren(...done(false)); }
+      onPicked();
+      setTimeout(() => openLink(link), PP_DELAY);
+      setTimeout(() => update(() => {}), PP_SHOW + 100); // danach wieder der normale Knopf
+    },
+  }, icon('wallet', { size: 17 }), `${fmtEuro(amount)} mit PayPal senden`);
+}
 const kw = (monday) => `KW ${isoWeek(monday).week}`;
 const pairs = () => openByPair(debtItems());
 const pairOf = (from, to) => pairs().find((p) => p.from === from && p.to === to);
@@ -146,7 +197,7 @@ registerSheet('pair', ({ from, to }) => {
     body: [
       h('div', { class: 'big-amount' }, fmtEuro(p.total)),
       dueTotal > 0 && canMark ? h('div', { class: 'stack' },
-        iPay && pp ? btn(`${fmtEuro(dueTotal)} mit PayPal senden`, { kind: 'primary', full: true, ic: 'wallet', href: paypalLink(pp, dueTotal) }) : null,
+        iPay && pp ? paypalButton(pairUi.key, dueTotal, paypalLink(pp, dueTotal), () => { pairUi.via = 'paypal'; setTimeout(redraw, 350); }) : null,
         seg(Object.entries(VIA), pairUi.via, (v) => { pairUi.via = v; redraw(); }),
         btn(iPay ? 'Ich habe bezahlt' : 'Als bezahlt abhaken', {
           kind: iPay && pp ? 'tinted' : 'primary', full: true, ic: 'check',
