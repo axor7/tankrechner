@@ -42,7 +42,7 @@ Eine Frage pro Bildschirm. Fahrer: Wohin fahrt ihr (Schule/Ausbildung, Arbeit, e
 ### Unterwegs
 
 - **Sperrungen umfahren:** Führt eure Route durch eine gemeldete Sperrung (Autobahn GmbH), steht oben unter „Fahrten“ ein roter Hinweis (nur für Admins und nur, wenn eure Route wirklich hindurchführt – geprüft wird Strecke und Fahrtrichtung). Auf „Strecke“: **„Ausweichroute wählen“** (Valhalla meidet die Sperrung, jede Variante wird als komplette Fahrt nachgerechnet) → Vorschlag antippen, Zeitraum prüfen → „Diese Route fahren“. Später: Zeitraum ändern, „Wieder normal“ oder ganz löschen. Mitfahrer sehen nur „Rückfahrt mit Umleitung über …“.
-- **Fahrt ausrechnen** (unter „Geld“): Von, Nach, optional Zwischenstopps, hin und zurück, Kosten teilen durch n Personen → Strecke, Fahrzeit, Verbrauch, Sprit, Nebenkosten, Gesamt und pro Person. An der Abrechnung ändert sich nichts.
+- **Fahrt ausrechnen** (unter „Geld“): Von, Nach, optional Zwischenstopps, hin und zurück, Kosten teilen durch n Personen, **Nebenkosten ein/aus** (eigener ct/km-Wert möglich) → Strecke, Fahrzeit, Verbrauch, Sprit und Nebenkosten getrennt, Gesamt und pro Person. An der Abrechnung und der Einstellung der Gruppe ändert sich nichts.
 
 ### Wie die App rechnet
 

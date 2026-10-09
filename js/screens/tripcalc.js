@@ -8,7 +8,8 @@ import { addressInput } from '../address.js';
 import { h, row, list, switchRow, field, stepper, btn, note, registerSheet, openSheet, sheet } from '../kit.js';
 import { fmtEuro, fmtKm, fmtL, fmtDuration, fmtPrice } from '../ui.js';
 
-const blank = () => ({ start: null, dest: null, stops: [], roundTrip: false, people: 1, consumption: null, price: null, edit: false });
+// extra: Nebenkosten einrechnen (null = wie in der Gruppe) · extraPerKm: eigener Wert in ct/km (null = Wert des Autos)
+const blank = () => ({ start: null, dest: null, stops: [], roundTrip: false, people: 1, consumption: null, price: null, extra: null, extraPerKm: null, edit: false });
 const get = () => ({ ...blank(), ...(state.ui.single || {}) });
 const set = (fn) => update((s) => { s.ui.single = { ...blank(), ...(s.ui.single || {}) }; fn(s.ui.single); });
 
@@ -45,10 +46,13 @@ registerSheet('calc', () => {
   const start = startPoint(sg);
   const consumption = sg.consumption ?? (Number(state.car?.consumption) || 0);
   const price = sg.price ?? effectivePrice();
+  const extraPerKm = sg.extraPerKm ?? (Number(state.car?.extraPerKm) || 0);
+  const withExtra = extraPerKm > 0 && (sg.extra ?? state.split?.includeExtra !== false);
   const r = result && !result.loading && !result.error ? singleTripCost({
     km: result.distance / 1000, minutes: result.duration / 60, consumption, price,
-    extraPerKm: Number(state.car?.extraPerKm) || 0, includeExtra: state.split?.includeExtra !== false, roundTrip: sg.roundTrip, people: sg.people,
+    extraPerKm, includeExtra: withExtra, roundTrip: sg.roundTrip, people: sg.people,
   }) : null;
+  const ct = String(extraPerKm).replace('.', ',');
   const num = (v, step, onChange) => h('input', { type: 'number', min: 0, step, inputmode: 'decimal', value: v, onchange: (e) => e.target.value !== '' && onChange(Number(e.target.value.replace(',', '.'))) });
   return sheet({
     title: 'Fahrt ausrechnen',
@@ -61,6 +65,7 @@ registerSheet('calc', () => {
       list(
         switchRow({ title: 'Hin und zurück', checked: sg.roundTrip, onChange: (v) => set((s) => { s.roundTrip = v; }) }),
         row({ title: 'Kosten teilen durch', trail: stepper(sg.people, { min: 1, max: 9, onChange: (n) => set((s) => { s.people = n; }), format: (n) => `${n} ${n === 1 ? 'Person' : 'Personen'}` }) }),
+        extraPerKm > 0 ? switchRow({ title: 'Nebenkosten einrechnen', sub: `Verschleiß wie Reifen und Wartung · ${ct} ct/km`, checked: withExtra, onChange: (v) => set((s) => { s.extra = v; }) }) : null,
       ),
       !sg.dest ? null
         : !result || result.loading ? note('Route wird berechnet …')
@@ -70,11 +75,16 @@ registerSheet('calc', () => {
               h('div', { class: 'hero-big' }, fmtEuro(r.total)),
               r.people > 1 ? h('div', { class: 'hero-sub' }, `${fmtEuro(r.perPerson)} pro Person`) : null,
               h('div', { class: 'facts' },
-                h('span', {}, fmtKm(r.km)), h('span', {}, fmtDuration(r.minutes * 60)), h('span', {}, `${fmtL(r.liters)} ${FUELS[state.car.fuel]?.label || ''}`))),
-      r ? h('button', { type: 'button', class: 'link-btn', onclick: () => set((s) => { s.edit = !s.edit; }) }, `${String(consumption).replace('.', ',')} l/100 km · ${fmtPrice(price)}/l – ${sg.edit ? 'fertig' : 'ändern'}`) : null,
-      r && sg.edit ? h('div', { class: 'two' },
-        field('Verbrauch (l/100 km)', num(consumption, 0.1, (v) => set((s) => { s.consumption = v; }))),
-        field('Preis (€/l)', num(Math.round(price * 1000) / 1000, 0.001, (v) => set((s) => { s.price = v; })))) : null,
+                h('span', {}, fmtKm(r.km)), h('span', {}, fmtDuration(r.minutes * 60)), h('span', {}, `${fmtL(r.liters)} ${FUELS[state.car.fuel]?.label || ''}`)),
+              extraPerKm > 0 ? h('div', { class: 'facts' },
+                r.extra > 0 ? [h('span', {}, `Sprit ${fmtEuro(r.fuel)}`), h('span', {}, `Nebenkosten ${fmtEuro(r.extra)}`)]
+                  : h('span', {}, `nur Sprit · ohne Nebenkosten (${fmtEuro(r.extraExcluded)})`)) : null),
+      r ? h('button', { type: 'button', class: 'link-btn', onclick: () => set((s) => { s.edit = !s.edit; }) }, `${String(consumption).replace('.', ',')} l/100 km · ${fmtPrice(price)}/l${extraPerKm > 0 ? ` · ${ct} ct/km` : ''} – ${sg.edit ? 'fertig' : 'ändern'}`) : null,
+      r && sg.edit ? h('div', { class: 'stack' },
+        h('div', { class: 'two' },
+          field('Verbrauch (l/100 km)', num(consumption, 0.1, (v) => set((s) => { s.consumption = v; }))),
+          field('Preis (€/l)', num(Math.round(price * 1000) / 1000, 0.001, (v) => set((s) => { s.price = v; })))),
+        field('Nebenkosten (ct/km)', num(extraPerKm, 0.5, (v) => set((s) => { s.extraPerKm = v; if (v > 0 && s.extra == null) s.extra = true; })), '0 = keine Nebenkosten')) : null,
       sg.dest ? btn('Neue Fahrt', { kind: 'plain', full: true, onClick: () => set((s) => { s.dest = null; s.stops = []; s.start = null; }) }) : null,
     ],
   });
