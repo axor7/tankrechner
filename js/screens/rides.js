@@ -7,6 +7,7 @@ import { isAdmin, inGroup } from '../account.js';
 import { me, setDay, setDriver, setDayOff, volunteerDrive, setPlan, addAbsence, removeAbsence } from '../actions.js';
 import { dirsNow, tripResult } from '../derived.js';
 import { relevantClosures } from '../engine.js';
+import { openTripCalc } from './tripcalc.js';
 import { cleanTitle } from '../traffic.js';
 import { planFor } from '../model.js';
 import { h, icon, header, section, list, card, row, switchRow, seg, btn, note, banner, field, avatar, noApp, registerSheet, openSheet, closeSheet, sheet, attempt, toast } from '../kit.js';
@@ -210,7 +211,7 @@ function myPlan(mine) {
 export function renderRides(el) {
   const mine = me();
   el.append(
-    header({ title: 'Fahrten', sub: longDay(todayIso()) }),
+    header({ title: 'Fahrten', sub: longDay(todayIso()), action: btn('Einzelfahrt', { kind: 'tinted', small: true, ic: 'route', onClick: openTripCalc }) }),
     ...alerts(mine),
     nextRide(mine),
     upcoming(mine),

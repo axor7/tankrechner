@@ -11,8 +11,8 @@ Handy: drei Reiter unten · Tablet/Computer: Seitenleiste links. Alles Weitere �
 
 | Bereich | Frage | Inhalt |
 |---|---|---|
-| **Fahrten** | Was steht an? | Hinweise nur, wenn man etwas tun kann („Daniel fällt aus · Übernimmst du?“, Sperrung auf eurer Strecke, Umleitung); **nächste Fahrt** (Fahrer: Abfahrt und Abholzeiten, Mitfahrer: eigene Abholzeit mit **Dabei / Nicht dabei**); **nächste Tage** als Liste (Ferien als eine Zeile, Status mit einem Tipp umschalten, Tag antippen = Details); **Mein Plan** (Rhythmus, Abwesend) |
-| **Geld** | Wer schuldet wem? | Ein Betrag oben, darunter ein Eintrag pro Person → Fenster mit **bezahlen** (PayPal – der Betrag wird dabei kopiert, weil die PayPal-App ihn aus dem Link oft nicht übernimmt; der Knopf zeigt kurz grün „… kopiert“, dann öffnet sich PayPal), „Ich habe bezahlt“ bzw. **Abhaken** mit Zahlungsart, **Erinnern** per WhatsApp, Wochen und Fahrten; Bestätigen mit Ja/Nein; **Deine Kosten** diese/nächste Woche, **Fahrt ausrechnen**, Verlauf |
+| **Fahrten** | Was steht an? | Oben **Einzelfahrt** (was kostet eine Fahrt außer der Reihe?); Hinweise nur, wenn man etwas tun kann („Daniel fällt aus · Übernimmst du?“, Sperrung auf eurer Strecke, Umleitung); **nächste Fahrt** (Fahrer: Abfahrt und Abholzeiten, Mitfahrer: eigene Abholzeit mit **Dabei / Nicht dabei**); **nächste Tage** als Liste (Ferien als eine Zeile, Status mit einem Tipp umschalten, Tag antippen = Details); **Mein Plan** (Rhythmus, Abwesend) |
+| **Geld** | Wer schuldet wem? | Ein Betrag oben, darunter ein Eintrag pro Person → Fenster mit **bezahlen** (PayPal – der Betrag wird dabei kopiert, weil die PayPal-App ihn aus dem Link oft nicht übernimmt; der Knopf zeigt kurz grün „… kopiert“, dann öffnet sich PayPal), „Ich habe bezahlt“ bzw. **Abhaken** mit Zahlungsart, **Erinnern** per WhatsApp, Wochen und Fahrten; Bestätigen mit Ja/Nein; **Deine Kosten** diese/nächste Woche, Verlauf |
 | **Gruppe** | Wer und wie? | Titel antippen = **Deine Gruppen** (wechseln, neu, beitreten, verlassen, löschen); Ich (Adresse, PayPal, „Ich kann auch fahren“), **Mitfahrer** (hinzufügen, Rhythmus, Abwesenheit, persönlich einladen), **Einladen**; **Fahrt**: Strecke, Uhrzeiten, Wer fährt, Fahrfrei; **Kosten**: Auto & Sprit, Aufteilung; Konto, Mitglieder & Rechte, Verlauf, Daten & Infos |
 
 **Strecke** (aus „Gruppe“) ist die einzige Seite mit Karte: Hin-/Rückfahrt, Halte in Reihenfolge (Admins: „Ändern“ für Ziel, Start und Reihenfolge), Sperrungen mit Ausweichrouten, Baustellen.
@@ -51,7 +51,7 @@ Eine Frage pro Bildschirm. Fahrer: Wohin fahrt ihr (Schule/Ausbildung, Arbeit, e
 ### Unterwegs
 
 - **Sperrungen umfahren:** Führt eure Route durch eine gemeldete Sperrung (Autobahn GmbH), steht oben unter „Fahrten“ ein roter Hinweis (nur für Admins und nur, wenn eure Route wirklich hindurchführt – geprüft wird Strecke und Fahrtrichtung). Auf „Strecke“: **„Ausweichroute wählen“** (Valhalla meidet die Sperrung, jede Variante wird als komplette Fahrt nachgerechnet) → Vorschlag antippen, Zeitraum prüfen → „Diese Route fahren“. Später: Zeitraum ändern, „Wieder normal“ oder ganz löschen. Mitfahrer sehen nur „Rückfahrt mit Umleitung über …“.
-- **Fahrt ausrechnen** (unter „Geld“): Von, Nach, optional Zwischenstopps, hin und zurück, Kosten teilen durch n Personen, **Nebenkosten ein/aus** (eigener ct/km-Wert möglich) → Strecke, Fahrzeit, Verbrauch, Sprit und Nebenkosten getrennt, Gesamt und pro Person. An der Abrechnung und der Einstellung der Gruppe ändert sich nichts.
+- **Einzelfahrt** (Knopf oben auf „Fahrten“): Strecke als Linie – Von (vorausgefüllt mit der eigenen Adresse), optional Zwischenstopps, Nach, Tauschen; zuletzt benutzte Ziele zum Antippen; hin und zurück, teilen durch n Personen, **Nebenkosten ein/aus** (eigener ct/km-Wert möglich) → Ergebnis-Karte mit Betrag (pro Person), Strecke, Fahrzeit, Liter, Sprit/Nebenkosten/Gesamt und **Teilen** (z. B. in WhatsApp). An der Abrechnung und der Einstellung der Gruppe ändert sich nichts.
 
 ### Wie die App rechnet
 
@@ -131,7 +131,7 @@ js/engine.js          Routen, Ausweichrouten, Sperrungen & Baustellen (inkl. „
 js/fuel.js            Spritpreis: Tankstellen an der Strecke, automatisch aktualisieren, beste Tankzeit
 js/screens/rides.js   Fahrten: Hinweise, nächste Fahrt, nächste Tage; Fenster Tag, Rhythmus, Abwesend
 js/screens/money.js   Geld: Betrag, pro Person (bezahlen, abhaken, erinnern), bestätigen, Kosten, Verlauf
-js/screens/tripcalc.js Fahrt ausrechnen
+js/screens/tripcalc.js Einzelfahrt (Fenster aus „Fahrten“)
 js/screens/group.js   Gruppe: Deine Gruppen, ich, Mitfahrer, Einladen, Fahrt, Kosten, Konto, Mitglieder, Verlauf, Daten & Infos
 js/screens/route.js   Strecke: Hin/Rück, Sperrung & Umleitung, Halte und Reihenfolge, Baustellen
 js/screens/start.js   Abläufe im Vollbild: Willkommen, Anmelden, Übersicht ohne Gruppe, neue Gruppe, Einrichten, „Bist du Max?“ / „Wer bist du?“, erste Angaben

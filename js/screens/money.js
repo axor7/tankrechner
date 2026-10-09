@@ -9,7 +9,6 @@ import { paymentMessage, paypalLink, paypalUser } from '../pay.js';
 import { h, icon, header, section, list, row, seg, btn, note, banner, avatar, noApp, isPlaceholder, registerSheet, openSheet, closeSheet, sheet, attempt, toast, copyText } from '../kit.js';
 import { nameOf, span } from '../plan.js';
 import { fmtEuro, fmtKm, fmtDate } from '../ui.js';
-import { calcSheetRow } from './tripcalc.js';
 
 const VIA = { cash: 'Bar', paypal: 'PayPal', bank: 'Überweisung' };
 
@@ -154,10 +153,7 @@ export function renderMoney(el) {
     ...confirmations(mine),
     ...openLists(mine).filter(Boolean),
     outlook(mine),
-    list(
-      calcSheetRow(),
-      row({ title: 'Verlauf', sub: 'Bezahlte Wochen', onClick: () => openSheet('history') }),
-    ),
+    list(row({ title: 'Verlauf', sub: 'Bezahlte Wochen', onClick: () => openSheet('history') })),
   );
 }
 

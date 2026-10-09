@@ -336,9 +336,36 @@ button.banner { cursor: pointer; }
 .trips { list-style: none; margin: 0; padding: 0 16px 12px; display: flex; flex-direction: column; gap: 4px; font-size: 14px; }
 .trips li { display: grid; grid-template-columns: 1fr auto auto; gap: 12px; }
 .muted { color: var(--text-2); }
-.result { align-items: center; text-align: center; }
-.result .hero-label { color: var(--text-2); }
-.facts { display: flex; gap: 14px; flex-wrap: wrap; justify-content: center; color: var(--text-2); font-size: 14px; }
+/* Einzelfahrt */
+.tp { position: relative; display: flex; flex-direction: column; gap: 8px; }
+.tp-row { display: flex; align-items: center; gap: 10px; position: relative; }
+.tp-row .addr { flex: 1; min-width: 0; }
+.tp-dot { width: 12px; height: 12px; border-radius: 50%; flex: none; background: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); position: relative; z-index: 1; }
+.tp-row.via .tp-dot { width: 9px; height: 9px; margin: 0 1.5px; background: var(--text-3); box-shadow: none; }
+.tp-row.to .tp-dot { background: var(--bad); box-shadow: 0 0 0 3px var(--bad-soft); border-radius: 3px; }
+.tp-row + .tp-row::before { content: ''; position: absolute; left: 5px; top: -30px; height: 34px; border-left: 2px dotted var(--text-3); }
+.tp-actions { display: flex; justify-content: space-between; align-items: center; padding-left: 18px; margin-top: -4px; }
+.tp-actions .link-btn { display: inline-flex; align-items: center; gap: 2px; align-self: auto; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.chips-label { font-size: 13px; color: var(--text-2); font-weight: 600; margin-right: 2px; }
+.chip { display: inline-flex; align-items: center; gap: 5px; border: 0; background: var(--card); color: var(--text); border-radius: 999px; padding: 7px 12px; font: inherit; font-size: 14px; cursor: pointer; box-shadow: var(--shadow); }
+.chip .ic { color: var(--bad); }
+.tr-edit-row .row-value { font-variant-numeric: tabular-nums; }
+.trip-result { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 6px; padding: 20px 18px 16px; }
+.trip-result.is-loading, .trip-result.is-error { padding: 22px 18px; }
+.tr-route { display: flex; align-items: center; gap: 8px; max-width: 100%; color: var(--text-2); font-size: 14px; font-weight: 600; }
+.tr-route > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tr-route .ic { color: var(--accent); flex: none; }
+.tr-total { font-family: var(--font-d); font-size: 46px; font-weight: 800; letter-spacing: -.03em; line-height: 1.05; font-variant-numeric: tabular-nums; }
+.tr-sub { color: var(--text-2); font-size: 14px; }
+.tr-facts { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; margin: 6px 0 4px; }
+.tr-facts > span { display: inline-flex; align-items: center; gap: 5px; background: var(--fill); border-radius: 999px; padding: 5px 11px; font-size: 13.5px; font-weight: 500; }
+.tr-facts .ic { color: var(--text-2); }
+.tr-split { display: grid; grid-template-columns: repeat(3, 1fr); width: 100%; border-top: 1px solid var(--line); margin: 6px 0 8px; padding-top: 12px; }
+.tr-split > div { display: flex; flex-direction: column; gap: 2px; }
+.tr-split > div + div { border-left: 1px solid var(--line); }
+.tr-split small { font-size: 12px; color: var(--text-2); }
+.tr-split strong { font-size: 16px; font-variant-numeric: tabular-nums; }
 
 /* ---------- Gruppe ---------- */
 .invite { display: flex; flex-direction: column; align-items: center; gap: 12px; background: var(--card); border-radius: var(--r); padding: 18px 16px; box-shadow: var(--shadow); }
