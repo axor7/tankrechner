@@ -1,7 +1,7 @@
 // Alle Änderungen an einer Stelle: prüft die Rechte, speichert im eigenen Profil (Mitfahrer)
 // oder in den gemeinsamen Daten (Admin) und schreibt ins Änderungsprotokoll.
 import { state, update, model, personById, todayIso, uid, COLORS } from './state.js';
-import { inGroup, isAdmin, myPersonId, updateProfile, log } from './account.js';
+import { inGroup, isAdmin, myPersonId, updateProfile, log, saveAccountData, accountData } from './account.js';
 import { withPlanVersion, planFor, planOn, absenceOn } from './model.js';
 import { mondayOf, addDays, isoWeek } from './calc.js';
 import { fmtDate } from './ui.js';
@@ -150,6 +150,7 @@ export function setDriverInfo(pid, { drives, car } = {}) {
   if (isMe(pid)) updateProfile((d) => patch(d));
   else if (isAdmin()) update((s) => patch(sharedPerson(s, pid)));
   else deny();
+  if (pid === me() && car && Number(car.consumption) > 0) saveAccountData({ car: { ...accountData().car, consumption: Number(car.consumption), fuel: car.fuel } });
   if (drives !== undefined) log(`${nameOf(pid)} ${drives ? 'kann fahren' : 'fährt nicht selbst'}`);
   if (car) log(`Auto von ${nameOf(pid)}: ${String(car.consumption).replace('.', ',')} l/100 km`);
 }
@@ -210,6 +211,7 @@ export function setAddress(pid, addr) {
   if (isMe(pid)) updateProfile((d) => { d.address = value; });
   else if (isAdmin()) update((s) => { sharedPerson(s, pid).address = value; });
   else deny();
+  if (pid === me() && addr?.lat != null) saveAccountData({ address: addr }); // geht in jede neue Gruppe mit
   log(`Adresse von ${nameOf(pid)}: ${addr?.label || 'entfernt'}`);
 }
 
@@ -218,6 +220,7 @@ export function setPaypal(pid, name) {
   if (isMe(pid)) updateProfile((d) => { d.paypal = { name, at }; });
   else if (isAdmin()) update((s) => { const p = sharedPerson(s, pid); p.paypal = name; p.paypalAt = at; });
   else deny();
+  if (pid === me()) saveAccountData({ paypal: name || null });
   log(`PayPal von ${nameOf(pid)} ${name ? 'hinterlegt' : 'entfernt'}`);
 }
 
@@ -225,6 +228,33 @@ export function setMyName(name) {
   const pid = me();
   if (isMe(pid) && pid.startsWith('u:')) updateProfile((d) => { d.name = name; });
   else if (isAdmin()) update(() => { const p = state.persons.find((x) => x.id === pid); if (p) p.name = name; });
+  saveAccountData({ name });
+}
+
+/** Auto der Gruppe (Admin) – merkt sich Verbrauch, Kraftstoff und Preis auch im Konto (für neue Gruppen). */
+export function setGroupCar({ consumption, fuel, price }) {
+  if (!isAdmin()) deny();
+  update((s) => {
+    if (consumption != null) s.car.consumption = consumption;
+    if (fuel) s.car.fuel = fuel;
+    if (price != null) s.price.manual = price;
+    s.setupCar = true;
+  });
+  log(`Auto: ${String(state.car.consumption).replace('.', ',')} l/100 km`);
+  if (me() === state.defaultDriver) saveAccountData({ car: { ...accountData().car, consumption: Number(state.car.consumption), fuel: state.car.fuel, ...(price != null ? { price } : {}) } });
+}
+
+/**
+ * Nach dem Beitreten: meine Angaben aus dem Konto übernehmen, wo in der Gruppe noch nichts steht
+ * (Abholadresse, PayPal) – so muss man sie nicht in jeder Gruppe neu eintragen.
+ */
+export function applyAccountDefaults() {
+  const pid = me();
+  const p = personById(pid);
+  if (!p) return;
+  const acc = accountData();
+  if (acc.address?.lat != null && !p.address?.lat) setAddress(pid, acc.address);
+  if (acc.paypal && !p.paypal) setPaypal(pid, acc.paypal);
 }
 
 // ---------- Zahlungen ----------

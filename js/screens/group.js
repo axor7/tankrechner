@@ -4,7 +4,8 @@ import { state, update, model, personById, persons, todayIso, effectivePrice } f
 import { FUELS } from '../calc.js';
 import { isActive, driverPlanAt } from '../model.js';
 import { paypalUser } from '../pay.js';
-import { inGroup, isAdmin, isLoggedIn, groupName, claims, members, myUserId, myName, myEmail, myGroups, setRole, removeMember, loadLog, inviteLink, inviteCode, renewInvite, newClaims, ackClaim, openGroup, leaveGroup, workLocally, signOut, createGroup, joinWith } from '../account.js';
+import { inGroup, isAdmin, isLoggedIn, groupName, claims, members, myUserId, myName, myEmail, setRole, removeMember, loadLog, inviteLink, inviteCode, renewInvite, newClaims, ackClaim,
+  leaveGroup, deleteGroup, leaveInfo, signOut, createGroup, allGroups, refreshGroups, accountData, saveAccountData, discardLocal } from '../account.js';
 import { me, setAddress, setPaypal, setMyName, addPerson, removePerson, setPersonField, adminSet, setDriverInfo, setDriverPlan, addOffPeriod, removeOffPeriod, setFreeDays } from '../actions.js';
 import { applyPriceMode, sortedStations, liveFuel, loadStations, stationsLoading, stationSelected, bestFuelTime } from '../fuel.js';
 import { data } from '../engine.js';
@@ -13,6 +14,7 @@ import { qrCode } from '../qr.js';
 import { formatVersion, loadedVersion } from '../version.js';
 import { h, icon, header, section, list, row, switchRow, seg, btn, note, banner, field, avatar, noApp, isPlaceholder, registerSheet, openSheet, closeSheet, sheet, attempt, toast, copyText, shareText } from '../kit.js';
 import { rhythmEditor, absenceEditor } from './rides.js';
+import { groupList, joinForm } from './start.js';
 import { nameOf, shortLabel, rhythmText, absenceText, upcomingFree, span } from '../plan.js';
 import { fmtPrice } from '../ui.js';
 
@@ -58,7 +60,8 @@ export function renderGroup(el) {
   const others = persons().filter((p) => isActive(p) && p.id !== mine);
   const canInvite = admin && inGroup();
   el.append(
-    header({ title: groupName() || 'Gruppe', sub: inGroup() ? `${others.length + 1} Personen` : 'Nur auf diesem Gerät',
+    header({ title: groupName() || (isLoggedIn() ? 'Auf diesem Gerät' : 'Gruppe'), sub: inGroup() ? `${others.length + 1} Personen` : 'Nur auf diesem Gerät',
+      onTitle: () => { refreshGroups(); openSheet('groups'); },
       action: canInvite ? btn('Einladen', { kind: 'primary', small: true, ic: 'user-plus', onClick: () => openSheet('invite') }) : null }),
     ...claimNotices(),
     myP ? list(row({ lead: avatar(mine, 'l'), title: myP.name, sub: myP.address?.label ? shortLabel(myP.address.label) : 'Adresse fehlt', cls: 'me-row', onClick: () => openSheet('me') })) : h('span'),
@@ -81,12 +84,17 @@ export function renderGroup(el) {
       row({ title: 'Auto & Sprit', value: `${carText(state.car)} · ${fmtPrice(effectivePrice())}`, onClick: admin ? () => openSheet('car') : null }),
       row({ title: 'Aufteilung', value: state.split.mode === 'segment' ? 'nach Strecke' : 'gleich pro Fahrt', onClick: admin ? () => openSheet('split') : null }),
     )),
+    !inGroup() && isLoggedIn() ? section(null, list(row({ lead: h('span', { class: 'av av-m grp' }, icon('upload', { size: 17 })), title: 'Gemeinsam nutzen', sub: 'Diese Gruppe hochladen und Mitfahrer einladen', onClick: () => openSheet('upload') }))) : null,
     section(null, list(
       row({ title: isLoggedIn() ? 'Konto' : 'Anmelden', value: isLoggedIn() ? myName() : 'gemeinsam nutzen', onClick: () => (isLoggedIn() ? openSheet('account') : update((s) => { s.ui.flow = 'login'; })) }),
       inGroup() && admin ? row({ title: 'Mitglieder & Rechte', onClick: () => openSheet('members') }) : null,
       admin ? row({ title: 'Verlauf', sub: 'Wer hat was geändert', onClick: () => openSheet('log') }) : null,
       row({ title: 'Daten & Infos', onClick: () => openSheet('about') }),
     )),
+    inGroup() ? section(null, list(
+      row({ title: 'Gruppe verlassen', tone: 'bad', chevron: false, onClick: () => confirmLeave() }),
+      admin ? row({ title: 'Gruppe löschen', sub: 'Für alle – mit allen Fahrten und Zahlungen', tone: 'bad', chevron: false, onClick: () => confirmDelete() }) : null,
+    )) : null,
   );
 }
 
@@ -301,6 +309,12 @@ registerSheet('free', () => {
 
 // ---------- Auto & Sprit ----------
 
+/** Fahre ich selbst? Dann Verbrauch und Kraftstoff auch im Konto merken (für neue Gruppen). */
+function rememberCar() {
+  if (me() !== state.defaultDriver || !(Number(state.car.consumption) > 0)) return;
+  saveAccountData({ car: { ...accountData().car, consumption: Number(state.car.consumption), fuel: state.car.fuel, extraPerKm: Number(state.car.extraPerKm) || 0 } });
+}
+
 registerSheet('car', () => {
   const fuel = liveFuel();
   const stations = fuel ? sortedStations(fuel).slice(0, 3) : [];
@@ -311,8 +325,8 @@ registerSheet('car', () => {
     title: 'Auto & Sprit',
     body: [
       h('div', { class: 'two' },
-        field('Verbrauch (l/100 km)', h('input', { type: 'number', min: 0, step: 0.1, inputmode: 'decimal', value: state.car.consumption, onchange: (e) => set((s) => { s.car.consumption = Number(e.target.value); }, `Verbrauch: ${e.target.value} l/100 km`) })),
-        field('Kraftstoff', h('select', { onchange: (e) => set((s) => { s.car.fuel = e.target.value; applyPriceMode(s); }, `Kraftstoff: ${FUELS[e.target.value]?.label}`) },
+        field('Verbrauch (l/100 km)', h('input', { type: 'number', min: 0, step: 0.1, inputmode: 'decimal', value: state.car.consumption, onchange: (e) => { set((s) => { s.car.consumption = Number(e.target.value); }, `Verbrauch: ${e.target.value} l/100 km`); rememberCar(); } })),
+        field('Kraftstoff', h('select', { onchange: (e) => { set((s) => { s.car.fuel = e.target.value; applyPriceMode(s); }, `Kraftstoff: ${FUELS[e.target.value]?.label}`); rememberCar(); } },
           Object.entries(FUELS).map(([k, f]) => h('option', { value: k, selected: k === state.car.fuel }, f.label))))),
       field('Verschleiß (ct/km)', h('input', { type: 'number', min: 0, step: 0.5, inputmode: 'decimal', value: state.car.extraPerKm, onchange: (e) => set((s) => { s.car.extraPerKm = Number(e.target.value); }, `Verschleiß: ${e.target.value} ct/km`) }), 'Optional, z. B. 8 ct/km für Reifen und Wartung'),
       section('Spritpreis', h('div', { class: 'stack' },
@@ -348,26 +362,113 @@ registerSheet('split', () => {
 
 // ---------- Konto ----------
 
-const acc = { newName: '', code: '' };
-registerSheet('account', () => {
-  const others = myGroups().filter((g) => g.name !== groupName() || !inGroup());
+// ---------- Deine Gruppen: wechseln, neu, beitreten, verlassen, löschen ----------
+
+/** Verlassen mit passender Rückfrage (allein → löschen anbieten, letzter Admin → Nachfolger nennen). */
+function confirmLeave(g = { id: null, name: groupName() }) {
+  attempt(async () => {
+    const info = await leaveInfo(g.id || undefined);
+    if (info.alone) {
+      if (confirm(`Du bist allein in „${g.name}“ – die Gruppe wird beim Verlassen gelöscht. Fortfahren?`)) {
+        // Darf man nicht löschen (nicht selbst erstellt), wenigstens verlassen
+        try { await deleteGroup(g.id || undefined); } catch { await leaveGroup(g.id || undefined); }
+        toast(`„${g.name}“ ist weg`, 'ok');
+      }
+      return;
+    }
+    const text = info.handOver
+      ? `„${g.name}“ verlassen? ${info.handOver} wird dann Admin. Bisherige Fahrten und Zahlungen bleiben in der Gruppe.`
+      : `„${g.name}“ verlassen? Bisherige Fahrten und Zahlungen bleiben in der Gruppe.`;
+    if (confirm(text)) {
+      await leaveGroup(g.id || undefined);
+      toast(`Du hast „${g.name}“ verlassen`, 'ok');
+    }
+  });
+}
+
+function confirmDelete(g = { id: null, name: groupName() }) {
+  if (!confirm(`„${g.name}“ für alle löschen? Alle Fahrten, Zahlungen und Mitglieder dieser Gruppe sind dann weg.`)) return;
+  attempt(async () => {
+    await deleteGroup(g.id || undefined);
+    toast(`„${g.name}“ gelöscht`, 'ok');
+  });
+}
+
+const gs = { code: '', edit: false };
+registerSheet('groups', () => {
+  const items = allGroups();
+  const online = items.filter((g) => !g.local);
+  const manage = gs.edit && isLoggedIn();
+  const manageRows = () => list(...items.map((g) => row({
+    lead: h('span', { class: `av av-m grp ${g.local ? 'local' : ''}` }, icon(g.local ? 'smartphone' : 'users', { size: 17 })),
+    title: g.name, sub: g.current ? 'gerade offen' : g.local ? 'ohne Konto, nur hier' : g.role === 'admin' ? 'Admin' : 'Mitfahrer', chevron: false,
+    trail: h('span', { class: 'row-inline' },
+      g.local
+        ? btn('Löschen', { kind: 'danger', small: true, onClick: () => { if (confirm('Die Gruppe „Auf diesem Gerät“ mit allen Daten löschen?')) { discardLocal(); toast('Gelöscht', 'ok'); } } })
+        : [
+          btn('Verlassen', { kind: 'plain', small: true, onClick: () => confirmLeave(g) }),
+          g.role === 'admin' ? btn('Löschen', { kind: 'danger', small: true, onClick: () => confirmDelete(g) }) : null,
+        ]),
+  })));
   return sheet({
-    title: 'Konto', sub: `${myName()} · ${myEmail()}`,
+    title: 'Deine Gruppen',
+    sub: isLoggedIn() ? `Angemeldet als ${myName()}` : 'Ohne Konto gibt es nur die Gruppe auf diesem Gerät.',
     body: [
-      inGroup() ? section('Gruppe', list(row({ title: groupName(), value: isAdmin() ? 'Admin' : 'Mitfahrer' }))) : null,
-      others.length ? section(inGroup() ? 'Wechseln zu' : 'Deine Gruppen', list(...others.map((g) => row({ title: g.name, onClick: () => attempt(async () => { await openGroup(g); closeSheet(); }) })))) : null,
-      section('Neue Gruppe', h('form', { class: 'inline-form', onsubmit: (e) => { e.preventDefault(); if (acc.newName.trim()) attempt(async () => { await createGroup(acc.newName); acc.newName = ''; closeSheet(); }); } },
-        h('input', { type: 'text', placeholder: 'Name, z. B. Berufsschule Erfurt', value: acc.newName, 'data-focus-key': 'acc-new', oninput: (e) => { acc.newName = e.target.value; } }),
-        h('button', { type: 'submit', class: 'btn small primary' }, 'Erstellen')), { foot: inGroup() ? null : 'Nimmt die Daten von diesem Gerät mit.' }),
-      section('Beitreten', h('form', { class: 'inline-form', onsubmit: (e) => { e.preventDefault(); attempt(async () => { await joinWith(acc.code); acc.code = ''; closeSheet(); }); } },
-        h('input', { type: 'text', placeholder: 'Code oder Link', autocapitalize: 'characters', value: acc.code, 'data-focus-key': 'acc-code', oninput: (e) => { acc.code = e.target.value; } }),
-        h('button', { type: 'submit', class: 'btn small tinted' }, 'Beitreten'))),
+      items.length ? section(null, manage ? manageRows() : groupList(items, { onPicked: closeSheet }),
+        { action: isLoggedIn() && online.length ? h('button', { type: 'button', class: 'link-btn', onclick: () => { gs.edit = !gs.edit; rerender(); } }, gs.edit ? 'Fertig' : 'Bearbeiten') : null })
+        : null,
+      isLoggedIn()
+        ? btn('Neue Gruppe', { kind: 'primary', full: true, ic: 'plus', onClick: () => { closeSheet(); update((s) => { s.ui.flow = 'newgroup'; }); } })
+        : btn('Anmelden', { kind: 'primary', full: true, onClick: () => { closeSheet(); update((s) => { s.ui.flow = 'login'; }); } }),
+      isLoggedIn() ? section('Mit Code beitreten', joinForm(gs)) : null,
+      isLoggedIn() ? note('Neue Gruppen starten leer – Name, Adresse, Auto und PayPal kommen aus deinem Konto.') : null,
+    ],
+  });
+});
+
+// ---------- Konto: meine Angaben ----------
+
+registerSheet('account', () => {
+  const a = accountData();
+  const car = a.car || {};
+  const saveCar = (patch) => { saveAccountData({ car: { ...car, ...patch } }); rerender(); };
+  return sheet({
+    title: 'Konto', sub: myEmail(),
+    body: [
+      section('Meine Angaben', h('div', { class: 'stack' },
+        field('Name', h('input', { type: 'text', value: a.name || '', autocomplete: 'name', 'data-focus-key': 'acc-name',
+          onchange: (e) => { const v = e.target.value.trim(); if (v) attempt(() => { if (me()) setMyName(v); else saveAccountData({ name: v }); rerender(); }); } })),
+        field('Adresse', addressInput({ value: a.address, allowLocate: true, focusKey: 'acc-addr', onSelect: (x) => { if (x) { saveAccountData({ address: x }); rerender(); } } }), 'Start bzw. Abholung'),
+        field('PayPal.me-Name', h('input', { type: 'text', value: a.paypal || '', placeholder: 'z. B. maxmuster', autocapitalize: 'off', spellcheck: false, 'data-focus-key': 'acc-pp',
+          onchange: (e) => { saveAccountData({ paypal: paypalUser(e.target.value) || e.target.value.trim() || null }); rerender(); } })),
+        h('div', { class: 'two' },
+          field('Verbrauch (l/100 km)', h('input', { type: 'number', min: 0, step: 0.1, inputmode: 'decimal', value: car.consumption ?? '', placeholder: '6,5', onchange: (e) => saveCar({ consumption: Number(e.target.value) || null }) })),
+          field('Kraftstoff', h('select', { onchange: (e) => saveCar({ fuel: e.target.value }) },
+            Object.entries(FUELS).map(([k, f]) => h('option', { value: k, selected: k === (car.fuel || 'e10') }, f.label)))))),
+      { foot: 'Kommt automatisch in jede neue Gruppe und in Gruppen, denen du beitrittst. Was in einer Gruppe steht, änderst du dort unter „Ich“.' }),
       list(
         row({ title: 'Passwort ändern', onClick: () => { closeSheet(); update((s) => { s.ui.flow = 'password'; }); } }),
-        inGroup() ? row({ title: 'Nur auf diesem Gerät arbeiten', onClick: () => { workLocally(); closeSheet(); } }) : null,
-        inGroup() ? row({ title: 'Gruppe verlassen', tone: 'bad', onClick: () => { if (confirm(`„${groupName()}“ wirklich verlassen?`)) attempt(async () => { await leaveGroup(); closeSheet(); }); } }) : null,
-        row({ title: 'Abmelden', tone: 'bad', onClick: () => attempt(async () => { await signOut(); closeSheet(); }) })),
+        row({ title: 'Abmelden', tone: 'bad', chevron: false, onClick: () => attempt(async () => { closeSheet(); await signOut(); }) })),
     ],
+  });
+});
+
+// ---------- Gemeinsam nutzen: Daten von diesem Gerät hochladen ----------
+
+const up = { name: '', busy: false };
+registerSheet('upload', () => {
+  const go = () => {
+    if (!up.name.trim() || up.busy) return;
+    up.busy = true; rerender();
+    attempt(async () => { await createGroup(up.name, { fromLocal: true }); toast(`„${up.name.trim()}“ ist jetzt online – lade deine Mitfahrer ein`, 'ok'); up.name = ''; })
+      .finally(() => { up.busy = false; rerender(); });
+  };
+  return sheet({
+    title: 'Gemeinsam nutzen',
+    sub: 'Deine Daten von diesem Gerät werden zu einer Online-Gruppe. Danach kannst du Mitfahrer einladen.',
+    body: h('form', { onsubmit: (e) => { e.preventDefault(); go(); } },
+      field('Name der Gruppe', h('input', { type: 'text', value: up.name, placeholder: 'z. B. Berufsschule Erfurt', maxlength: 80, 'data-focus-key': 'up-name', 'data-autofocus': '', oninput: (e) => { up.name = e.target.value; } }))),
+    foot: btn(up.busy ? 'Wird hochgeladen …' : 'Hochladen', { kind: 'primary', full: true, ic: 'upload', disabled: up.busy, onClick: go }),
   });
 });
 

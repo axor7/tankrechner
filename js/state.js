@@ -66,6 +66,12 @@ function load() {
 const listeners = new Set();
 export let state = load();
 let rev = 0; // Änderungszähler (für zwischengespeicherte Berechnungen)
+let generation = 0; // zählt Gruppenwechsel – Hintergrundarbeiten prüfen damit, ob ihr Ergebnis noch passt
+
+/** Aktuelle Daten-Generation (ändert sich bei jedem Gruppenwechsel). */
+export const dataGen = () => generation;
+/** Neue Generation beginnen: laufende Hintergrundarbeiten schreiben dann nichts mehr. */
+export function newDataGen() { generation++; }
 
 export function save() {
   try { localStorage.setItem(KEY, JSON.stringify(state)); } catch { /* Speicher voll o. ä. */ }

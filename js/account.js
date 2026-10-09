@@ -1,20 +1,28 @@
-// Konto & Fahrgemeinschaft (nur Logik, keine Oberfläche): Anmelden, Gruppe anlegen/beitreten/wechseln,
-// Rollen, eigenes Profil, Synchronisation, Einladungen, Plätze übernehmen, Verlauf.
+// Konto & Fahrgemeinschaft (nur Logik, keine Oberfläche): Anmelden, meine Angaben (gehen in jede Gruppe mit),
+// Gruppen anlegen/beitreten/wechseln/verlassen/löschen, Rollen, eigenes Profil, Synchronisation, Einladungen,
+// Plätze übernehmen, Verlauf.
 // Jede Änderung meldet sich mit dem Ereignis „account-changed“ – die Oberfläche zeichnet dann neu.
-import { state, update, sharedData, applyRemote, onChange, COLORS, defaultState, setProfiles, personById } from './state.js';
+// Beim Gruppenwechsel kommt zusätzlich „group-switched“ (offene Fenster schließen, Zwischenstände verwerfen).
+//
+// Daten auf dem Gerät: Der Arbeitsstand (state) gehört immer zur aktiven Gruppe. Die Gruppe „Auf diesem Gerät“
+// (ohne Konto) wird beim Wechsel in eine Online-Gruppe unter BACKUP_KEY beiseitegelegt und beim Zurückwechseln
+// wiederhergestellt. Daten einer Gruppe werden nie in eine andere kopiert.
+import { state, update, sharedData, applyRemote, onChange, COLORS, defaultState, setProfiles, personById, newDataGen } from './state.js';
 import * as cloud from './cloud.js';
 import { createSync } from './sync.js';
 import { toast, debounce } from './ui.js';
 
 const META_KEY = 'tankrechner:cloud';
 const BACKUP_KEY = 'tankrechner:local-backup';
+const ACCOUNT_KEY = 'tankrechner:account'; // meine Angaben ohne Anmeldung
+export const LOCAL = 'local'; // Kennung der Gruppe „Auf diesem Gerät“
 
 const load = (k, d) => { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } };
 const store = (k, v) => { try { if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, JSON.stringify(v)); } catch { /* egal */ } };
 const changed = () => document.dispatchEvent(new CustomEvent('account-changed'));
 
 let user = null;
-let meta = load(META_KEY, {}); // { groupId, groupName, personId, role }
+let meta = load(META_KEY, {}); // { groupId, groupName, personId, role, fresh } – fresh: gerade neu erstellt, Einrichtung läuft
 let syncStatus = 'synced';
 let unwatch = [];
 let groups = [];
@@ -25,6 +33,9 @@ let claimOffer = null;    // Platz aus dem persönlichen Link, nach dem Beitrete
 let recovering = false;   // über den Link aus der „Passwort vergessen“-Mail gekommen
 let ready = false;        // Anmeldung beim Start geprüft
 let live = false;
+let switching = null;     // Name der Gruppe, zu der gerade gewechselt wird
+let prevRef = null;       // wohin nach Abbrechen/Verlassen zurück: Gruppen-ID oder LOCAL
+let pendingAccount = {};  // meine Angaben, die noch nicht beim Server sind
 
 const sync = createSync({
   backend: cloud.backend,
@@ -51,6 +62,23 @@ export const myUserId = () => user?.id || null;
 export const hasPendingJoin = () => !!pendingJoin;
 export const isRecovering = () => recovering;
 export const pendingClaim = () => claimOffer;
+export const switchingTo = () => switching;
+/** Gerade neu erstellte Gruppe, deren Einrichtung noch läuft (Abbrechen löscht sie wieder). */
+export const isFreshGroup = () => inGroup() && !!meta.fresh && meta.role === 'admin';
+export const currentGroupRef = () => (inGroup() ? meta.groupId : LOCAL);
+
+const hasData = (s) => !!s && (!!s.setupDone || (s.persons?.length || 0) > 1);
+/** Gibt es eine Gruppe „Auf diesem Gerät“ (ohne Konto) mit Daten? */
+export function localHasData() {
+  return inGroup() ? hasData(load(BACKUP_KEY, null)) : hasData(state);
+}
+/** Alle meine Gruppen für die Auswahl: Online-Gruppen + ggf. „Auf diesem Gerät“. */
+export function allGroups() {
+  const list = user ? groups.map((g) => ({ ...g, current: inGroup() && g.id === meta.groupId })) : [];
+  if (inGroup() && !list.some((g) => g.current)) list.unshift({ id: meta.groupId, name: meta.groupName, role: meta.role, personId: meta.personId, current: true });
+  if (localHasData()) list.push({ id: LOCAL, name: 'Auf diesem Gerät', local: true, role: 'admin', current: !inGroup() });
+  return list;
+}
 export const clearClaimOffer = () => { claimOffer = null; try { sessionStorage.removeItem('tankrechner:claim'); } catch { /* egal */ } changed(); };
 
 /** Einladungslink für die Gruppe – mit pid ein persönlicher Link für genau diesen Platz. */
@@ -67,6 +95,77 @@ export function claims() {
   const m = new Map();
   if (inGroup()) for (const x of memberList) if (x.person_id) m.set(x.person_id, { name: x.display_name || 'Jemand', me: x.user_id === user?.id, role: x.role, userId: x.user_id });
   return m;
+}
+
+// ---------- Meine Angaben (gehen in jede Gruppe mit) ----------
+
+const pickAddress = (a) => (a?.lat != null ? { label: a.label || '', lat: a.lat, lng: a.lng } : null);
+
+/** Name, Adresse, PayPal und Auto aus dem Konto (ohne Anmeldung: auf diesem Gerät). */
+export function accountData() {
+  const base = user ? { ...(user.user_metadata?.tr || {}), name: cloud.userName(user) } : load(ACCOUNT_KEY, {});
+  return { ...base, ...pendingAccount };
+}
+
+async function pushAccountNow() {
+  const patch = { ...pendingAccount };
+  if (!user || !Object.keys(patch).length) return;
+  const { name, ...rest } = patch;
+  try {
+    user = await cloud.updateAccount(name || cloud.userName(user), { ...(user.user_metadata?.tr || {}), ...rest });
+    for (const k of Object.keys(patch)) if (JSON.stringify(pendingAccount[k]) === JSON.stringify(patch[k])) delete pendingAccount[k];
+  } catch { /* bleibt offen – nächster Versuch mit der nächsten Änderung */ }
+}
+const pushAccount = debounce(pushAccountNow, 800);
+
+/** Meine Angaben ändern: { name?, address?, paypal?, car? } – gespeichert wird nur, was sich ändert. */
+export function saveAccountData(patch) {
+  const cur = accountData();
+  const next = {};
+  for (const [k, v] of Object.entries(patch)) {
+    if (v === undefined) continue;
+    const val = k === 'address' ? pickAddress(v) : v;
+    if (JSON.stringify(cur[k] ?? null) !== JSON.stringify(val ?? null)) next[k] = val;
+  }
+  if (!Object.keys(next).length) return;
+  if (user) {
+    Object.assign(pendingAccount, next);
+    pushAccount();
+    if (next.name && inGroup()) cloud.setDisplayName(meta.groupId, next.name).then(reloadProfiles).catch(() => {});
+  } else {
+    store(ACCOUNT_KEY, { ...load(ACCOUNT_KEY, {}), ...next });
+  }
+}
+
+/** Fehlen im Konto noch Angaben, die in der aktuellen Gruppe schon stehen? Dann übernehmen (einmalig). */
+function seedAccount() {
+  const pid = inGroup() ? meta.personId : (state.setupDone ? state.ui.me || state.defaultDriver : null);
+  const p = pid ? personById(pid) : null;
+  if (!p) return;
+  const acc = accountData();
+  const patch = {};
+  if (!acc.address?.lat && p.address?.lat) patch.address = p.address;
+  if (!acc.paypal && p.paypal) patch.paypal = p.paypal;
+  if (!acc.car) {
+    if (Number(p.car?.consumption) > 0) patch.car = { consumption: Number(p.car.consumption), fuel: p.car.fuel || state.car.fuel };
+    else if (pid === state.defaultDriver && state.setupCar && Number(state.car?.consumption) > 0) {
+      patch.car = { consumption: Number(state.car.consumption), fuel: state.car.fuel, extraPerKm: Number(state.car.extraPerKm) || 0, price: Number(state.price?.manual) || null };
+    }
+  }
+  if (Object.keys(patch).length) saveAccountData(patch);
+}
+
+/** Frische Daten für eine neue Gruppe – nur mit meinen Angaben, nichts aus anderen Gruppen. */
+function freshGroupData() {
+  const d = defaultState();
+  const acc = accountData();
+  const me = d.persons[0];
+  me.name = acc.name || cloud.userName(user);
+  if (acc.address?.lat) me.address = { ...pickAddress(acc.address), at: Date.now() };
+  if (acc.paypal) { me.paypal = acc.paypal; me.paypalAt = Date.now(); }
+  if (Number(acc.car?.consumption) > 0) d.car = { ...d.car, consumption: Number(acc.car.consumption), fuel: acc.car.fuel || d.car.fuel, extraPerKm: Number(acc.car.extraPerKm) || 0 };
+  if (Number(acc.car?.price) > 0) d.price = { ...d.price, manual: Number(acc.car.price) };
+  return sharedData(d);
 }
 
 // ---------- Neue Übernahmen (für Admins) ----------
@@ -96,10 +195,13 @@ export function myProfile() {
   return state.profiles?.find((p) => p.userId === user?.id)?.data || {};
 }
 
-const saveMyProfile = debounce(async () => {
-  if (!inGroup()) return;
-  try { await cloud.saveProfile(meta.groupId, myProfile()); } catch (e) { toast(`Konnte nicht gespeichert werden: ${e.message}`, 'error'); }
-}, 600);
+let profileDirty = false;
+async function flushProfile() {
+  if (!inGroup() || !profileDirty) return;
+  profileDirty = false;
+  try { await cloud.saveProfile(meta.groupId, myProfile()); } catch (e) { profileDirty = true; toast(`Konnte nicht gespeichert werden: ${e.message}`, 'error'); }
+}
+const saveMyProfile = debounce(flushProfile, 600);
 
 /** Eigenes Profil ändern (Adresse, Rhythmus, Tage, Abwesenheiten, „bezahlt“ …). */
 export function updateProfile(fn) {
@@ -109,13 +211,16 @@ export function updateProfile(fn) {
   mine.data = structuredClone(mine.data || {});
   fn(mine.data);
   setProfiles(list);
+  profileDirty = true;
   saveMyProfile();
 }
 
 async function reloadProfiles() {
   if (!inGroup()) return;
+  const gid = meta.groupId;
   try {
-    const [rows, mem] = await Promise.all([cloud.loadProfiles(meta.groupId), cloud.members(meta.groupId)]);
+    const [rows, mem] = await Promise.all([cloud.loadProfiles(gid), cloud.members(gid)]);
+    if (meta.groupId !== gid) return; // inzwischen gewechselt
     memberList = mem;
     const personOf = new Map(mem.map((m) => [m.user_id, m.person_id]));
     const mine = myProfile();
@@ -199,73 +304,206 @@ export async function claimNew(name) {
   changed();
 }
 
-// ---------- Gruppe öffnen / verlassen ----------
+// ---------- Gruppe öffnen / wechseln / verlassen ----------
 
-async function activate(gid, gname, personId, role) {
-  if (!meta.groupId && !load(BACKUP_KEY, null)) store(BACKUP_KEY, sharedData(state)); // eigene lokale Daten sichern
-  unwatch.forEach((u) => u());
-  meta = { groupId: gid, groupName: gname, personId: personId ?? null, role: role || 'member' };
-  store(META_KEY, meta);
-  await sync.start(gid);
-  await reloadProfiles();
-  unwatch = [
-    await cloud.watchGroup(gid, (v) => sync.remoteChanged(v), (ok) => { live = ok; }),
-    await cloud.watchProfiles(gid, () => reloadProfiles()),
-  ];
-  refreshGroupDetails();
-  changed();
-}
-
-function deactivate({ restore = true } = {}) {
+/** Aktive Gruppe trennen: keine Synchronisation, keine Live-Updates, Hintergrundarbeiten verfallen. */
+function disconnect() {
   sync.stop();
   unwatch.forEach((u) => u());
   unwatch = [];
-  meta = {};
-  store(META_KEY, null);
   info = null;
   memberList = [];
-  state.profiles = [];
-  const backup = load(BACKUP_KEY, null);
-  if (restore) applyRemote(backup || sharedData(defaultState()), []);
-  store(BACKUP_KEY, null);
-  changed();
+  newDataGen();
+  if (state.profiles?.length) setProfiles([]);
+  document.dispatchEvent(new CustomEvent('group-switched'));
+}
+
+/** Aktive Gruppe (meta) verbinden. resume: dieselbe Gruppe wie zuletzt – klappt nur das Laden nicht, bleibt sie offline aktiv. */
+async function connect({ resume = false } = {}) {
+  const gid = meta.groupId;
+  try {
+    if (await sync.start(gid, { resume }) === false) return false;
+  } catch (e) {
+    if (!resume) throw e;
+  }
+  if (meta.groupId !== gid) return false;
+  await reloadProfiles();
+  try {
+    unwatch = [
+      await cloud.watchGroup(gid, (v) => sync.remoteChanged(v), (ok) => { live = ok; }),
+      await cloud.watchProfiles(gid, () => reloadProfiles()),
+    ];
+  } catch { /* ohne Live-Updates – es wird regelmäßig nachgeschaut */ }
+  refreshGroupDetails();
+  return true;
 }
 
 async function refreshGroupDetails() {
-  if (!meta.groupId) return;
+  const gid = meta.groupId;
+  if (!gid) return;
   try {
-    [info, groups] = await Promise.all([cloud.groupInfo(meta.groupId), cloud.myGroups()]);
-    const mine = groups.find((g) => g.id === meta.groupId);
+    const [i, g] = await Promise.all([cloud.groupInfo(gid), cloud.myGroups()]);
+    groups = g;
+    if (meta.groupId !== gid) { changed(); return; } // inzwischen gewechselt
+    info = i;
+    const mine = groups.find((x) => x.id === gid);
     if (mine) { meta.groupName = mine.name; meta.personId = mine.personId; meta.role = mine.role; store(META_KEY, meta); }
   } catch (e) {
-    if (/0 rows|JSON object requested/i.test(e.message)) { toast('Du bist nicht mehr Mitglied dieser Fahrgemeinschaft', 'error'); deactivate(); }
+    if (meta.groupId === gid && /0 rows|JSON object requested/i.test(e.message)) {
+      toast('Du bist nicht mehr Mitglied dieser Fahrgemeinschaft', 'error');
+      await groupGone(gid);
+    }
   }
   changed();
 }
 
-export async function openGroup(g) { await activate(g.id, g.name, g.personId, g.role); }
+/** Offene Änderungen der aktiven Gruppe noch speichern (höchstens ein paar Sekunden warten). */
+async function settleCurrent() {
+  if (!inGroup()) return;
+  const wait = (p) => Promise.race([p, new Promise((r) => setTimeout(r, 4000))]).catch(() => {});
+  await Promise.all([isAdmin() ? wait(sync.flush()) : null, wait(flushProfile())]);
+}
 
-/** Wieder nur auf diesem Gerät arbeiten (die Gruppe bleibt bestehen). */
-export function workLocally() { deactivate(); }
-
-export async function leaveGroup() {
-  log('hat die Fahrgemeinschaft verlassen');
-  await cloud.leaveGroup(meta.groupId);
-  deactivate();
-  groups = await cloud.myGroups();
+/** Zurück zur Gruppe „Auf diesem Gerät“ (ohne Speichern – z. B. abgemeldet oder Gruppe weg). */
+function resetToLocal() {
+  if (meta.groupId) prevRef = meta.groupId;
+  disconnect();
+  meta = {};
+  store(META_KEY, null);
+  applyRemote(load(BACKUP_KEY, null) || sharedData(defaultState()), []);
+  store(BACKUP_KEY, null);
   changed();
 }
 
-/** Neue Fahrgemeinschaft – mit den Daten von diesem Gerät (der Fahrer bin ich). */
-export async function createGroup(name, { takeData = true } = {}) {
-  const base = takeData ? structuredClone(sharedData(state)) : sharedData(defaultState());
+/**
+ * In eine Gruppe wechseln: { id, name, personId, role } oder { id: LOCAL }.
+ * Vorher wird gespeichert, was noch offen ist. Klappt das Laden nicht, bleibt alles, wie es war.
+ * keepLocal: „Auf diesem Gerät“ nicht beiseitelegen (wurde gerade hochgeladen) · discard: aktuelle Gruppe gibt es
+ * nicht mehr (nichts speichern) · fresh: gerade neu erstellt (Einrichtung läuft).
+ */
+export async function switchGroup(target, { keepLocal = false, discard = false, fresh = false } = {}) {
+  if (switching) return;
+  if (target.id === LOCAL ? !inGroup() : inGroup() && target.id === meta.groupId) return;
+  switching = target.id === LOCAL ? 'Auf diesem Gerät' : target.name || 'Gruppe';
+  changed();
+  const before = inGroup() ? { ...meta } : null;
+  try {
+    if (!discard) await settleCurrent();
+    if (target.id === LOCAL) { resetToLocal(); return; }
+    if (!before && !keepLocal) store(BACKUP_KEY, hasData(state) ? sharedData(state) : null); // eigene Daten beiseitelegen
+    prevRef = before?.groupId || LOCAL;
+    disconnect();
+    meta = { groupId: target.id, groupName: target.name, personId: target.personId ?? null, role: target.role || 'member', ...(fresh ? { fresh: true } : {}) };
+    store(META_KEY, meta);
+    try {
+      await connect();
+    } catch (e) {
+      // Laden hat nicht geklappt: zurück, wo wir waren – die Daten auf dem Bildschirm gehören noch dazu
+      disconnect();
+      if (before && !discard) {
+        meta = before;
+        store(META_KEY, meta);
+        await connect({ resume: true });
+      } else if (before) {
+        meta = {};
+        store(META_KEY, null);
+        resetToLocal();
+      } else {
+        meta = {};
+        store(META_KEY, null);
+        store(BACKUP_KEY, null);
+      }
+      throw new Error(`„${target.name || 'Gruppe'}“ konnte nicht geöffnet werden: ${e.message}`);
+    }
+    seedAccount();
+  } finally {
+    switching = null;
+    changed();
+  }
+}
+
+export async function openGroup(g) { await switchGroup(g); }
+
+/** Eine Gruppe ist weg (verlassen, gelöscht, entfernt worden): Liste neu laden und ggf. woandershin wechseln. */
+async function groupGone(gid) {
+  groups = await cloud.myGroups().catch(() => groups.filter((g) => g.id !== gid));
+  if (meta.groupId !== gid) { changed(); return; }
+  const backToLocal = prevRef === LOCAL && hasData(load(BACKUP_KEY, null));
+  const next = groups.find((g) => g.id === prevRef) || (backToLocal ? null : groups[0]);
+  if (next) await switchGroup(next, { discard: true }).catch((e) => { toast(e.message, 'error'); resetToLocal(); });
+  else resetToLocal();
+}
+
+/** Was passiert beim Verlassen? → { alone, handOver } (handOver: Name dessen, der dann Admin wird). */
+export async function leaveInfo(gid = meta.groupId) {
+  const mem = gid === meta.groupId && memberList.length ? memberList : await cloud.members(gid);
+  const others = mem.filter((m) => m.user_id !== user?.id);
+  const mine = mem.find((m) => m.user_id === user?.id);
+  const needAdmin = mine?.role === 'admin' && others.length && !others.some((m) => m.role === 'admin');
+  return { alone: !others.length, handOver: needAdmin ? others[0].display_name || 'jemand' : null };
+}
+
+/** Gruppe verlassen – man bleibt angemeldet und landet in der vorigen (oder einer anderen) Gruppe. */
+export async function leaveGroup(gid = meta.groupId) {
+  if (!gid || gid === LOCAL) return;
+  const mem = await cloud.members(gid);
+  const others = mem.filter((m) => m.user_id !== user.id);
+  const mine = mem.find((m) => m.user_id === user.id);
+  // Es muss immer jemand Admin bleiben
+  if (mine?.role === 'admin' && others.length && !others.some((m) => m.role === 'admin')) await cloud.setRole(gid, others[0].user_id, 'admin');
+  if (gid === meta.groupId) await settleCurrent();
+  await cloud.addLog(gid, myName(), 'hat die Fahrgemeinschaft verlassen');
+  if (gid === meta.groupId) sync.stop();
+  await cloud.leaveGroup(gid);
+  await groupGone(gid);
+}
+
+/** Gruppe für alle löschen (Admins). */
+export async function deleteGroup(gid = meta.groupId) {
+  if (!gid || gid === LOCAL) return;
+  if (!(await cloud.deleteGroup(gid))) throw new Error('Diese Gruppe kann nur löschen, wer sie erstellt hat. (Tipp für den Ersteller: supabase/setup.sql erneut ausführen, dann dürfen das alle Admins.)');
+  await groupGone(gid);
+}
+
+/** Einrichtung einer gerade erstellten Gruppe abbrechen: Gruppe wieder löschen, zurück zur vorigen. */
+export async function cancelNewGroup() {
+  if (isFreshGroup()) await deleteGroup(meta.groupId);
+}
+
+/** Einrichtung fertig: die Gruppe ist nicht mehr „frisch“. */
+export function groupSetupDone() {
+  if (meta.fresh) { delete meta.fresh; store(META_KEY, meta); }
+}
+
+/**
+ * Neue Fahrgemeinschaft. Normal: leer, nur mit meinen Angaben (Name, Adresse, Auto, PayPal) – danach läuft die
+ * Einrichtung wie beim ersten Mal. fromLocal: die Daten „Auf diesem Gerät“ hochladen (nur von dort aus).
+ */
+export async function createGroup(name, { fromLocal = false } = {}) {
+  if (!user) throw new Error('Bitte zuerst anmelden.');
+  if (fromLocal && inGroup()) throw new Error('Hochladen geht nur von „Auf diesem Gerät“ aus.');
+  const base = fromLocal ? structuredClone(sharedData(state)) : freshGroupData();
   const me = base.persons.find((p) => p.id === base.defaultDriver) || base.persons[0];
-  if (me && (me.name === 'Ich' || !me.name)) me.name = cloud.userName(user);
+  if (me && (me.name === 'Ich' || !me.name)) me.name = accountData().name || cloud.userName(user);
   const g = await cloud.createGroup(name.trim(), base, cloud.userName(user), me?.id);
-  groups = await cloud.myGroups();
-  await activate(g.id, g.name, me?.id, 'admin');
-  log(`hat die Fahrgemeinschaft „${g.name}“ erstellt`);
+  groups = await cloud.myGroups().catch(() => [...groups, { id: g.id, name: g.name, personId: me?.id, role: 'admin' }]);
+  if (fromLocal) store(BACKUP_KEY, null); // liegt jetzt online – nicht doppelt behalten
+  await switchGroup({ id: g.id, name: g.name, personId: me?.id, role: 'admin' }, { keepLocal: fromLocal, fresh: !fromLocal });
+  log(fromLocal ? `hat die Fahrgemeinschaft „${g.name}“ mit den Daten von diesem Gerät erstellt` : `hat die Fahrgemeinschaft „${g.name}“ erstellt`);
   return g;
+}
+
+/** Gruppe „Auf diesem Gerät“ löschen (nur angemeldet – sonst „Alles löschen“ unter Daten & Infos). */
+export function discardLocal() {
+  if (inGroup()) store(BACKUP_KEY, null);
+  else applyRemote(sharedData(defaultState()), []);
+  changed();
+}
+
+/** Liste meiner Gruppen neu holen. */
+export async function refreshGroups() {
+  if (!user) return;
+  try { groups = await cloud.myGroups(); changed(); } catch { /* offline */ }
 }
 
 // ---------- Einladung ----------
@@ -295,7 +533,8 @@ async function doJoin(join) {
   try { sessionStorage.removeItem('tankrechner:join'); } catch { /* egal */ }
   groups = await cloud.myGroups();
   const mine = groups.find((x) => x.id === g.id);
-  await activate(g.id, g.name, mine?.personId || null, mine?.role || 'member');
+  if (inGroup() && meta.groupId === g.id) toast(`Du bist schon in „${g.name}“`);
+  else await switchGroup({ id: g.id, name: g.name, personId: mine?.personId || null, role: mine?.role || 'member' });
   if (pid && !meta.personId && !claims().has(pid)) {
     claimOffer = pid;
     try { sessionStorage.setItem('tankrechner:claim', pid); } catch { /* egal */ }
@@ -316,12 +555,16 @@ export async function joinWith(text) {
 // ---------- Anmelden ----------
 
 async function afterLogin() {
+  pendingAccount = {};
+  // Angaben, die ohne Konto auf diesem Gerät standen, ins Konto übernehmen (was dort noch fehlt)
+  const localAcc = load(ACCOUNT_KEY, {});
+  const acc = accountData();
+  const missing = Object.fromEntries(Object.entries(localAcc).filter(([k, v]) => k !== 'name' && v != null && acc[k] == null));
+  if (Object.keys(missing).length) saveAccountData(missing);
   groups = await cloud.myGroups();
   if (pendingJoin) await doJoin(pendingJoin);
-  else if (groups.length && !inGroup()) {
-    const pick = groups.find((g) => g.id === meta.groupId) || groups[0];
-    await activate(pick.id, pick.name, pick.personId, pick.role);
-  }
+  else if (groups.length && !inGroup()) await switchGroup(groups.find((g) => g.id === meta.groupId) || groups[0]);
+  else seedAccount();
   changed();
 }
 
@@ -336,10 +579,12 @@ export async function signUp(name, email, password) {
 }
 
 export async function signOut() {
-  if (inGroup()) deactivate();
+  if (inGroup()) { await settleCurrent(); resetToLocal(); }
+  await pushAccountNow();
   await cloud.signOut();
   user = null;
   groups = [];
+  pendingAccount = {};
   changed();
 }
 
@@ -381,16 +626,17 @@ export async function initAccount() {
   if (cloud.hasStoredSession() || pendingJoin || meta.groupId || recovery === 'recovery') {
     try {
       user = await cloud.getUser();
-      cloud.onAuthChange((u) => { user = u; if (!u && inGroup()) deactivate(); changed(); });
-      if (user && meta.groupId) await activate(meta.groupId, meta.groupName, meta.personId, meta.role);
-      else if (!user && meta.groupId) deactivate();
+      cloud.onAuthChange((u) => { user = u; if (!u && meta.groupId) resetToLocal(); changed(); });
+      if (user && meta.groupId) await connect({ resume: true });
+      else if (!user && meta.groupId) resetToLocal();
       if (user && pendingJoin) await doJoin(pendingJoin).catch((e) => { pendingJoin = null; toast(e.message, 'error'); });
-      if (user) cloud.myGroups().then((g) => { groups = g; changed(); }).catch(() => {});
+      if (user) cloud.myGroups().then((g) => { groups = g; seedAccount(); changed(); }).catch(() => {});
     } catch (e) {
       syncStatus = 'offline';
       toast(`Fahrgemeinschaft nicht erreichbar: ${e.message}`, 'error');
     }
   }
+  if (!user) seedAccount();
   if (recovery === 'recovery') recovering = true;
   else if (recovery?.error) toast(recovery.error, 'error');
   ready = true;

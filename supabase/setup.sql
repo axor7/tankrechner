@@ -107,8 +107,9 @@ create policy "Mitglieder lesen Gruppe" on public.groups
   for select to authenticated using (public.is_group_member(id));
 
 drop policy if exists "Ersteller löscht Gruppe" on public.groups;
-create policy "Ersteller löscht Gruppe" on public.groups
-  for delete to authenticated using (created_by = auth.uid());
+drop policy if exists "Admins löschen Gruppe" on public.groups;
+create policy "Admins löschen Gruppe" on public.groups
+  for delete to authenticated using (created_by = auth.uid() or public.is_group_admin(id));
 
 drop policy if exists "Mitglieder sehen Mitglieder" on public.group_members;
 create policy "Mitglieder sehen Mitglieder" on public.group_members

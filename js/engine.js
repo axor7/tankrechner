@@ -1,6 +1,6 @@
 // Arbeit im Hintergrund (ohne Oberfläche): Route und beste Abholreihenfolge, Teilstrecken für die Abrechnung,
 // Sperrungen & Baustellen, Ausweichrouten, Schulferien/Feiertage, Wochen einfrieren, Daten sichern.
-import { state, update, model, personById, allRoutes, liveSnap, todayIso, replaceState, defaultState } from './state.js';
+import { state, update, model, personById, allRoutes, liveSnap, todayIso, replaceState, defaultState, dataGen } from './state.js';
 import { reverseGeocode, fetchRoute, fetchRouteInfo, valhallaRoute, optimizeOrder, fetchSchoolHolidays, fetchPublicHolidays } from './api.js';
 import { plannedStops, routeKey, mondayOf, addDays, hasOwners, insertDetours } from './calc.js';
 import { searchAlternatives, usesClosure } from './detours.js';
@@ -63,6 +63,7 @@ export const refreshRoute = debounce(async (force = false) => {
   const driver = personById(state.defaultDriver);
   if (!driver?.address?.lat || !state.destination?.lat) return;
   routeBusy = true;
+  const gen = dataGen(); // nach einem Gruppenwechsel nichts mehr schreiben
   document.body.classList.add('loading-route');
   try {
     const pickups = persons.filter((p) => p.id !== driver.id && p.address?.lat != null);
@@ -73,6 +74,7 @@ export const refreshRoute = debounce(async (force = false) => {
     const onlyRemoved = state.optimizedFor && tokens.every((t) => state.optimizedFor.split(';').includes(t));
     if (!state.order?.length && pickups.length > 1 && (force || (state.optimizedFor !== optKey && !onlyRemoved))) {
       const idx = await optimizeOrder([driver.address, ...pickups.map((p) => p.address), state.destination]);
+      if (gen !== dataGen()) return;
       const order = idx.map((i) => pickups[i].id);
       const old = state.optimizedOrder || [];
       for (const [k, id] of old.entries()) if (personById(id)?.archived && !order.includes(id)) order.splice(Math.min(k, order.length), 0, id);
@@ -86,6 +88,7 @@ export const refreshRoute = debounce(async (force = false) => {
       const field = dir === 'rueck' ? 'returnRoute' : 'route';
       if (!force && state[field]?.key === key) continue;
       const [r] = await fetchRoute(stops);
+      if (gen !== dataGen()) return;
       update((s) => {
         s[field] = { key, distance: r.distance, duration: r.duration, coords: r.coords, legs: r.legs, wpIdx: r.wpIdx };
         s.routeCache = { ...(s.routeCache || {}), [routeKey(stops)]: r.legs.map((l) => ({ km: Math.round(l.distance / 100) / 10, min: l.duration / 60 })) };
@@ -94,7 +97,7 @@ export const refreshRoute = debounce(async (force = false) => {
     }
     if (state.roundTrip === false && state.returnRoute) update((s) => { s.returnRoute = null; });
   } catch (e) {
-    toast(`Route konnte nicht berechnet werden: ${e.message}`, 'error');
+    if (gen === dataGen()) toast(`Route konnte nicht berechnet werden: ${e.message}`, 'error');
   } finally {
     routeBusy = false;
     document.body.classList.remove('loading-route');
@@ -175,6 +178,7 @@ export const shortPlace = (label = '') => {
 /** Ausweichrouten um eine Sperrung suchen (wie bei Google/Apple Karten). closure: { coords, title, from, until } */
 export async function findDetours(dir, closure = null) {
   if (!isAdmin()) return;
+  const gen = dataGen();
   suggestions = { dir, closure, loading: true, done: 0, total: 0, list: [] };
   update((s) => { s.ui.routeDir = dir; });
   try {
@@ -182,21 +186,30 @@ export async function findDetours(dir, closure = null) {
     if (stops.length < 2) throw new Error('Start und Ziel fehlen');
     const res = await searchAlternatives(stops, {
       dir, closure, fetchRoute, valhallaRoute,
-      onProgress: (done, total) => { suggestions.done = done; suggestions.total = total; rerender(); },
+      onProgress: (done, total) => { if (gen === dataGen() && suggestions) { suggestions.done = done; suggestions.total = total; rerender(); } },
     });
+    if (gen !== dataGen()) return;
     await Promise.all(res.list.map(async (x) => {
       x.label = await reverseGeocode(x.lat, x.lng);
       x.city = cityOf(x.label);
       x.place = x.roads.length ? x.roads.join(', ') : x.city || shortPlace(x.label);
     }));
+    if (gen !== dataGen()) return;
     suggestions = { ...suggestions, loading: false, list: res.list, base: res.base };
   } catch (e) {
+    if (gen !== dataGen()) return;
     suggestions = { ...suggestions, loading: false, list: [], error: e.message };
   }
   rerender();
 }
 
 export function clearSuggestions() { suggestions = null; rerender(); }
+
+/** Nach einem Gruppenwechsel: Zwischenstände der vorigen Gruppe verwerfen. */
+export function resetGroupCaches() {
+  suggestions = null;
+  traffic = { hin: [], rueck: [], roads: [], at: 0, key: '', loading: false, ready: false, error: '' };
+}
 
 // ---------- Sperrungen & Baustellen ----------
 
@@ -213,10 +226,12 @@ async function loadTrafficNow(force = false) {
   const key = `${dirs.map((d) => `${routes[d].key}/${normals[d].key}`).join('|')}|${roads.join()}`;
   if (!force && traffic.key === key && Date.now() - traffic.at < 15 * 60e3) return;
   traffic = { ...traffic, loading: true };
+  const gen = dataGen();
   try {
     if (info.some((i) => i.error)) throw new Error('Straßen der Route nicht ermittelt');
     const now = new Date();
     const items = (await Promise.all(roads.map((r) => roadEvents(r, { force })))).flat().filter((i) => isCurrent(i.times, now));
+    if (gen !== dataGen()) return;
     const along = (d) => {
       const list = alongRoute(items, routes[d].coords);
       for (const it of alongRoute(items, normals[d].coords)) if (isClosure(it) && !list.some((x) => x.id === it.id)) list.push(it);
@@ -224,6 +239,7 @@ async function loadTrafficNow(force = false) {
     };
     traffic = { hin: along('hin'), rueck: routes.rueck ? along('rueck') : [], roads, at: Date.now(), key, loading: false, ready: true, error: '' };
   } catch (e) {
+    if (gen !== dataGen()) return;
     traffic = { ...traffic, roads, at: Date.now(), key, loading: false, ready: true, error: e.message || 'Fehler' };
   }
   rerender();
@@ -274,10 +290,13 @@ export const ensureRoutes = debounce(async () => {
       }
     }
   }
+  const gen = dataGen();
   for (const [k, stops] of missing) {
+    if (gen !== dataGen()) return;
     inflight.add(k);
     try {
       const [r] = await fetchRoute(stops);
+      if (gen !== dataGen()) return;
       const legs = r.legs.map((l) => ({ km: Math.round(l.distance / 100) / 10, min: l.duration / 60 }));
       update((s) => {
         s.localRoutes = { ...(s.localRoutes || {}), [k]: legs };
@@ -300,12 +319,14 @@ export async function ensureHolidays() {
   const pub = hol.public.enabled && stale(hol.public);
   if (!school && !pub) return;
   holidaysLoading = true;
+  const gen = dataGen();
   try {
     const from = addDays(hol.from && hol.from < t0 ? hol.from : t0, -60);
     const [periods, publicDays] = await Promise.all([
       school ? fetchSchoolHolidays(hol.region, from, addDays(t0, 540)) : null,
       pub ? fetchPublicHolidays(hol.region, addDays(t0, -30), addDays(t0, 540)) : null,
     ]);
+    if (gen !== dataGen()) return;
     update((s) => {
       const next = { ...s.holidays };
       if (periods) Object.assign(next, { periods, fetchedAt: Date.now(), fetchedFor: hol.region });

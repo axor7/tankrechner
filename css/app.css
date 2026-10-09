@@ -108,7 +108,10 @@ body[data-screen="route"] .map-host { display: block; }
   .rail-item:hover { background: var(--fill); }
   .rail-item.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
   .rail-item .badge { position: static; margin-left: auto; }
-  .rail-foot { margin-top: auto; display: flex; align-items: center; gap: 10px; padding: 10px 12px; font-size: 14px; font-weight: 600; }
+  .rail-foot { margin-top: auto; display: flex; align-items: center; gap: 10px; padding: 10px 12px; font-size: 14px; font-weight: 600; border: 0; background: none; color: inherit; font-family: inherit; text-align: left; border-radius: 12px; cursor: pointer; width: 100%; }
+  .rail-foot:hover { background: var(--fill); }
+  .rail-foot > span:nth-last-child(2) { flex: 1; min-width: 0; }
+  .rail-foot > .ic { color: var(--text-2); }
   .rail-foot small { display: block; font-weight: 400; color: var(--text-2); font-size: 12px; }
   body[data-screen="route"] .screen { max-width: 460px; margin-left: var(--rail-w); margin-right: 0; }
   body[data-screen="route"] .map-host { position: fixed; top: 0; bottom: 0; right: 0; left: calc(var(--rail-w) + 460px); border-left: .5px solid var(--line); }
@@ -125,6 +128,10 @@ body[data-screen="route"] .map-host { display: block; }
 .scr-titles { min-width: 0; }
 .scr-head h1 { font-size: 34px; font-weight: 800; letter-spacing: -.025em; overflow-wrap: anywhere; }
 .scr-head h1.long { font-size: 26px; line-height: 1.15; }
+.title-btn { border: 0; background: none; padding: 0; margin: 0; font: inherit; color: inherit; letter-spacing: inherit; line-height: inherit; text-align: left; cursor: pointer; display: inline; overflow-wrap: anywhere; }
+.title-btn .ic { color: var(--accent); display: inline-flex; vertical-align: middle; margin-left: 4px; position: relative; top: -2px; }
+.av.grp { background: var(--accent-soft); color: var(--accent); }
+.av.grp.local { background: var(--fill); color: var(--text-2); }
 .scr-sub { font-size: 13px; font-weight: 600; color: var(--text-2); text-transform: uppercase; letter-spacing: .02em; }
 .back { display: inline-flex; align-items: center; gap: 2px; border: 0; background: none; color: var(--accent); font-size: 17px; padding: 4px 0; margin-left: -6px; cursor: pointer; align-self: flex-start; }
 

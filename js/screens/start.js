@@ -3,8 +3,9 @@
 import { state, update, personById, activePersons, todayIso } from '../state.js';
 import { FUELS } from '../calc.js';
 import { hasPlan } from '../model.js';
-import { inGroup, isAdmin, isLoggedIn, claims, claimPerson, claimNew, myProfile, updateProfile, hasPendingJoin, pendingClaim, clearClaimOffer, parseJoin, setPendingJoin, joinWith, signIn, signUp, requestPasswordReset, setNewPassword, isRecovering, cancelRecovery, accountReady } from '../account.js';
-import { me, setAddress, setMyName, addPerson, adminSet } from '../actions.js';
+import { inGroup, isAdmin, isLoggedIn, claims, claimPerson, claimNew, myProfile, updateProfile, hasPendingJoin, pendingClaim, clearClaimOffer, parseJoin, setPendingJoin, joinWith, signIn, signUp, signOut, requestPasswordReset, setNewPassword, isRecovering, cancelRecovery, accountReady,
+  switchingTo, localHasData, allGroups, switchGroup, createGroup, isFreshGroup, cancelNewGroup, groupSetupDone, leaveGroup, groupName, myName, accountData } from '../account.js';
+import { me, setAddress, setMyName, addPerson, adminSet, setGroupCar, applyAccountDefaults } from '../actions.js';
 import { debtItems } from '../derived.js';
 import { data } from '../engine.js';
 import { addressInput } from '../address.js';
@@ -33,10 +34,14 @@ function page({ step, steps, back, title, text, body, foot }) {
 /** Liefert den Ablauf, der gerade gezeigt werden muss – oder null für die normale App. */
 export function currentFlow() {
   if (!accountReady()) return 'loading';
+  if (switchingTo()) return 'switching';
   if (isRecovering()) return 'newpass';
   const f = state.ui.flow;
   if (['login', 'register', 'forgot', 'password'].includes(f)) return f;
+  if (f === 'newgroup' && isLoggedIn()) return f;
   if (hasPendingJoin() && !isLoggedIn()) return 'register';
+  // Angemeldet, aber gerade in keiner Gruppe (und nichts auf dem Gerät): Übersicht statt leerer Einrichtung
+  if (isLoggedIn() && !inGroup() && !localHasData()) return 'hub';
   if (!state.ui.welcomeDone && !inGroup() && !hasPendingJoin()) return 'welcome';
   if (inGroup() && !me()) return 'claim';
   if (isAdmin() && !state.setupDone) return 'setup';
@@ -49,11 +54,78 @@ export function currentFlow() {
 }
 
 export function renderFlow(el, flow) {
-  const fn = { loading, welcome, login: auth, register: auth, forgot, password: newPassword, newpass: newPassword, setup, claim, member }[flow];
+  const fn = { loading, switching: loading, welcome, hub, newgroup: newGroup, login: auth, register: auth, forgot, password: newPassword, newpass: newPassword, setup, claim, member }[flow];
   el.append(fn(flow));
 }
 
-const loading = () => h('div', { class: 'flow center' }, h('span', { class: 'app-mark' }, '⛽'));
+const loading = (flow) => h('div', { class: 'flow center' },
+  h('span', { class: 'app-mark' }, '⛽'),
+  flow === 'switching' ? h('p', { class: 'flow-text' }, `Öffne „${switchingTo()}“ …`) : null);
+
+// ---------- Angemeldet, aber in keiner Gruppe ----------
+
+const hubUi = { code: '' };
+function hub() {
+  const list = allGroups();
+  return page({
+    title: `Hallo ${myName()}!`,
+    text: list.length ? 'Wähle eine Fahrgemeinschaft – oder starte eine neue.' : 'Du bist gerade in keiner Fahrgemeinschaft. Starte eine neue oder tritt mit einem Code bei.',
+    body: [
+      list.length ? groupList(list) : null,
+      btn('Neue Gruppe erstellen', { kind: 'primary', full: true, ic: 'plus', onClick: () => update((s) => { s.ui.flow = 'newgroup'; }) }),
+      joinForm(hubUi),
+    ],
+    foot: h('button', { type: 'button', class: 'link-btn', onclick: () => attempt(signOut) }, 'Abmelden'),
+  });
+}
+
+/** Liste von Gruppen zum Wechseln (auch im Fenster „Deine Gruppen“). */
+export function groupList(items, { onPicked } = {}) {
+  return list(...items.map((g) => row({
+    lead: h('span', { class: `av av-m grp ${g.local ? 'local' : ''}` }, icon(g.local ? 'smartphone' : 'users', { size: 17 })),
+    title: g.name, sub: g.local ? 'ohne Konto, nur hier' : g.role === 'admin' ? 'Admin' : 'Mitfahrer',
+    trail: g.current ? icon('check', { size: 18 }) : null, chevron: !g.current,
+    onClick: g.current ? null : () => { onPicked?.(); attempt(() => switchGroup(g)); },
+  })));
+}
+
+/** Mit Code oder Link beitreten. */
+export function joinForm(ui) {
+  return h('form', { class: 'inline-form', onsubmit: (e) => {
+    e.preventDefault();
+    const j = parseJoin(ui.code);
+    if (!j) { toast('Das ist kein gültiger Code', 'error'); return; }
+    attempt(async () => { await joinWith(j); ui.code = ''; });
+  } },
+  h('input', { type: 'text', placeholder: 'Einladungscode', autocapitalize: 'characters', value: ui.code, 'data-focus-key': 'join-code', oninput: (e) => { ui.code = e.target.value; } }),
+  h('button', { type: 'submit', class: 'btn tinted' }, 'Beitreten'));
+}
+
+// ---------- Neue Gruppe ----------
+
+const ng = { name: '', busy: false };
+function newGroup() {
+  const acc = accountData();
+  const known = [acc.address?.label ? 'Adresse' : null, acc.car?.consumption ? 'Auto' : null, acc.paypal ? 'PayPal' : null].filter(Boolean);
+  const submit = (e) => {
+    e?.preventDefault();
+    if (!ng.name.trim() || ng.busy) return;
+    ng.busy = true; rerender();
+    attempt(async () => {
+      Object.assign(sd, { names: '', arrive: null, leave: null, car: null });
+      await createGroup(ng.name);
+      ng.name = '';
+      update((s) => { s.ui.flow = null; s.ui.setupStep = 0; s.ui.screen = 'rides'; s.ui.welcomeDone = true; });
+    }).finally(() => { ng.busy = false; rerender(); });
+  };
+  return page({
+    back: closeFlow, title: 'Neue Gruppe',
+    text: `Wie soll eure Fahrgemeinschaft heißen? Danach geht es wie beim ersten Mal weiter${known.length ? ` – ${known.join(', ')} und Name setzt die App aus deinem Konto ein` : ''}.`,
+    body: h('form', { class: 'stack', onsubmit: submit },
+      field('Name der Gruppe', h('input', { type: 'text', value: ng.name, placeholder: 'z. B. Arbeit Erfurt', maxlength: 80, 'data-focus-key': 'ng-name', 'data-autofocus': '', oninput: (e) => { ng.name = e.target.value; rerender(); } }))),
+    foot: btn(ng.busy ? 'Wird erstellt …' : 'Weiter', { kind: 'primary', full: true, disabled: !ng.name.trim() || ng.busy, onClick: submit }),
+  });
+}
 
 // ---------- Willkommen ----------
 
@@ -150,7 +222,9 @@ function setup() {
   const step = Math.min(state.ui.setupStep || 0, steps - 1);
   const go = (k) => update((s) => { s.ui.setupStep = k; });
   const next = () => go(step + 1);
-  const back = step > 0 ? () => go(step - 1) : () => update((s) => { s.ui.welcomeDone = false; });
+  const back = step > 0 ? () => go(step - 1)
+    : isFreshGroup() ? () => { if (confirm(`Einrichtung abbrechen? Die Gruppe „${groupName()}“ wird wieder gelöscht.`)) attempt(cancelNewGroup); }
+      : !inGroup() ? () => update((s) => { s.ui.welcomeDone = false; }) : null;
   const driver = personById(state.defaultDriver);
   const others = activePersons().filter((p) => p.id !== state.defaultDriver);
   const common = { step, steps, back };
@@ -194,7 +268,7 @@ function setup() {
           field('Kraftstoff', h('select', { onchange: (e) => { local.fuel = e.target.value; } }, Object.entries(FUELS).map(([k, f]) => h('option', { value: k, selected: k === local.fuel }, f.label))))),
         field('Preis pro Liter (€)', h('input', { type: 'number', step: 0.001, min: 0, inputmode: 'decimal', value: local.price, oninput: (e) => { local.price = Number(e.target.value); } })),
       ],
-      foot: btn('Weiter', { kind: 'primary', full: true, onClick: () => { attempt(() => adminSet((s) => { s.car.consumption = local.consumption; s.car.fuel = local.fuel; s.price.manual = local.price; s.setupCar = true; }, `Auto: ${local.consumption} l/100 km`)); next(); } }) });
+      foot: btn('Weiter', { kind: 'primary', full: true, onClick: () => { attempt(() => setGroupCar({ consumption: Number(local.consumption) || state.car.consumption, fuel: local.fuel, price: Number(local.price) || state.price.manual })); next(); } }) });
   }
   if (step === 4) {
     return page({ ...common, title: 'Wann fährst du?', text: 'In Ferien und an Feiertagen fährt nach Plan niemand.', body: rhythmEditor(state.defaultDriver, { saveLabel: 'Weiter', onSaved: next }) });
@@ -206,7 +280,7 @@ function setup() {
         h('input', { type: 'text', placeholder: 'Name', value: sd.names, 'data-focus-key': 'su-names', oninput: (e) => { sd.names = e.target.value; } }),
         h('button', { type: 'submit', class: 'btn tinted' }, 'Hinzufügen')),
     ],
-    foot: btn(others.length ? 'Fertig' : 'Später', { kind: 'primary', full: true, onClick: () => attempt(() => adminSet((s) => { s.setupDone = true; s.ui.screen = 'rides'; }, 'Einrichtung abgeschlossen')) }) });
+    foot: btn(others.length ? 'Fertig' : 'Später', { kind: 'primary', full: true, onClick: () => attempt(() => { adminSet((s) => { s.setupDone = true; s.ui.screen = 'rides'; }, 'Einrichtung abgeschlossen'); groupSetupDone(); }) }) });
 }
 
 // ---------- Platz übernehmen ----------
@@ -228,17 +302,19 @@ function claim() {
         row({ title: 'Rhythmus', value: rhythmText(p) }),
         row({ title: 'Offen', value: owe > 0.004 ? fmtEuro(owe) : 'nichts' })),
       foot: [
-        btn('Ja, das bin ich', { kind: 'primary', full: true, onClick: () => attempt(async () => { await claimPerson(pick); claimUi.pick = null; toast(`Willkommen, ${p.name}!`, 'ok'); }) }),
+        btn('Ja, das bin ich', { kind: 'primary', full: true, onClick: () => attempt(async () => { await claimPerson(pick); claimUi.pick = null; applyAccountDefaults(); toast(`Willkommen, ${p.name}!`, 'ok'); }) }),
         btn('Nein', { kind: 'plain', full: true, onClick: () => { claimUi.pick = null; clearClaimOffer(); } }),
       ],
     });
   }
   const free = activePersons().filter((p) => !taken.has(p.id) && !p.self);
+  claimUi.newName ||= free.length ? '' : accountData().name || '';
   return page({
-    title: 'Wer bist du?', text: free.length ? 'Such deinen Namen aus.' : 'Trag deinen Namen ein.',
+    back: () => { if (confirm(`„${groupName()}“ wieder verlassen?`)) attempt(() => leaveGroup()); },
+    title: 'Wer bist du?', text: free.length ? `In „${groupName()}“ – such deinen Namen aus.` : `In „${groupName()}“ – trag deinen Namen ein.`,
     body: [
       free.length ? list(...free.map((p) => row({ lead: avatar(p.id, 'm'), title: p.name, sub: shortLabel(p.address?.label) || rhythmText(p), onClick: () => { claimUi.pick = p.id; rerender(); } }))) : null,
-      h('form', { class: 'inline-form', onsubmit: (e) => { e.preventDefault(); if (claimUi.newName.trim()) attempt(() => claimNew(claimUi.newName.trim())); } },
+      h('form', { class: 'inline-form', onsubmit: (e) => { e.preventDefault(); if (claimUi.newName.trim()) attempt(async () => { await claimNew(claimUi.newName.trim()); claimUi.newName = ''; applyAccountDefaults(); }); } },
         h('input', { type: 'text', placeholder: free.length ? 'Ich bin neu – Name' : 'Dein Name', value: claimUi.newName, 'data-focus-key': 'cl-new', oninput: (e) => { claimUi.newName = e.target.value; } }),
         h('button', { type: 'submit', class: 'btn tinted' }, 'Weiter')),
     ],

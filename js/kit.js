@@ -15,18 +15,23 @@ export async function attempt(fn) {
 // ---------- Bildschirm & Abschnitte ----------
 
 /** Kopf eines Bildschirms: großer Titel, optional Zurück und eine Aktion rechts. */
-export function header({ title, sub, back, action }) {
+/** Kopf eines Bildschirms. onTitle: Titel ist antippbar (z. B. Gruppe wechseln) und zeigt einen Pfeil. */
+export function header({ title, sub, back, action, onTitle }) {
+  const long = String(title).length > 16 ? 'long' : null;
   return h('header', { class: 'scr-head' },
     back ? h('button', { type: 'button', class: 'back', onclick: back.onClick }, icon('chevron-left', { size: 22 }), back.label) : null,
     h('div', { class: 'scr-head-row' },
-      h('div', { class: 'scr-titles' }, sub ? h('div', { class: 'scr-sub' }, sub) : null, h('h1', { class: String(title).length > 16 ? 'long' : null }, title)),
+      h('div', { class: 'scr-titles' }, sub ? h('div', { class: 'scr-sub' }, sub) : null,
+        h('h1', { class: long }, onTitle
+          ? h('button', { type: 'button', class: 'title-btn', onclick: onTitle, 'aria-haspopup': 'dialog' }, h('span', {}, title), icon('chevron-down', { size: long ? 20 : 24 }))
+          : title)),
       action || null));
 }
 
 /** Abschnitt mit Überschrift (optional mit kleiner Aktion rechts). */
 export function section(title, content, { action, foot } = {}) {
   return h('section', { class: 'sec' },
-    title ? h('div', { class: 'sec-head' }, h('h2', {}, title), action || null) : null,
+    title || action ? h('div', { class: 'sec-head' }, title ? h('h2', {}, title) : h('span'), action || null) : null,
     content,
     foot ? h('p', { class: 'sec-foot' }, foot) : null);
 }

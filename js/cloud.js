@@ -98,6 +98,12 @@ export async function updatePassword(password) {
   await run(sb.auth.updateUser({ password }));
 }
 
+/** Eigene Angaben im Konto speichern (Name + Daten, die in jede Gruppe mitgehen). Gibt den aktualisierten Nutzer zurück. */
+export async function updateAccount(name, data) {
+  const sb = await client();
+  return (await run(sb.auth.updateUser({ data: { name, tr: data } }))).user;
+}
+
 export async function signOut() {
   const sb = await client();
   await sb.auth.signOut();
@@ -138,6 +144,19 @@ export async function setMyPerson(groupId, personId) {
   const sb = await client();
   const user = await getUser();
   await run(sb.from('group_members').update({ person_id: personId }).eq('group_id', groupId).eq('user_id', user.id));
+}
+
+export async function setDisplayName(groupId, name) {
+  const sb = await client();
+  const user = await getUser();
+  await run(sb.from('group_members').update({ display_name: name }).eq('group_id', groupId).eq('user_id', user.id));
+}
+
+/** Gruppe für alle löschen. Gibt false zurück, wenn der Server es nicht erlaubt hat (z. B. nicht Ersteller). */
+export async function deleteGroup(groupId) {
+  const sb = await client();
+  const rows = await run(sb.from('groups').delete().eq('id', groupId).select('id'));
+  return rows.length > 0;
 }
 
 export async function leaveGroup(groupId) {

@@ -96,3 +96,63 @@ test('Offline: wird später erneut versucht', async () => {
   assert.equal(server.row.data.n, 1);
   assert.equal(sync.status, 'synced');
 });
+
+test('Gruppenwechsel: Änderungen während des Ladens landen nicht in der neuen Gruppe', async () => {
+  const g1 = fakeServer({ name: 'Arbeit', persons: ['Daniel', 'Anna'] });
+  const g2 = fakeServer({ name: 'Schule', persons: ['Daniel'] });
+  let slow = null;
+  const backend = {
+    load: (id) => (id === 'g2' ? new Promise((r) => { slow = () => r(g2.load()); }) : g1.load()),
+    save: (id, d, v) => (id === 'g2' ? g2.save(id, d, v) : g1.save(id, d, v)),
+  };
+  const dev = { state: {} };
+  const sync = createSync({ backend, getShared: () => dev.state, delay: 1, retryMs: 1,
+    applyRemote: (d, fns) => { dev.state = structuredClone(d); fns.forEach((f) => f(dev.state)); } });
+  await sync.start('g1');
+  const switching = sync.start('g2');
+  // Eine Hintergrundarbeit der alten Gruppe schreibt noch etwas, während die neue lädt
+  dev.state.persons.push('Max');
+  sync.noteLocalChange((s) => { s.persons.push('Max'); });
+  await settle();
+  slow();
+  await switching;
+  await settle();
+  assert.deepEqual(g2.row.data, { name: 'Schule', persons: ['Daniel'] });
+  assert.equal(g2.saves, 0);
+  assert.deepEqual(dev.state.persons, ['Daniel']);
+  assert.deepEqual(g1.row.data.persons, ['Daniel', 'Anna']);
+});
+
+test('Gruppenwechsel: ein überholter Ladevorgang wird verworfen', async () => {
+  const g1 = fakeServer({ name: 'A' });
+  const g2 = fakeServer({ name: 'B' });
+  let release = null;
+  const backend = {
+    load: (id) => (id === 'g1' ? new Promise((r) => { release = () => r(g1.load()); }) : g2.load()),
+    save: (id, d, v) => (id === 'g1' ? g1.save(id, d, v) : g2.save(id, d, v)),
+  };
+  const dev = { state: {} };
+  const sync = createSync({ backend, getShared: () => dev.state, delay: 1, retryMs: 1, applyRemote: (d) => { dev.state = structuredClone(d); } });
+  const first = sync.start('g1');
+  await sync.start('g2');
+  release();
+  assert.equal(await first, false);
+  assert.equal(dev.state.name, 'B');
+  assert.equal(sync.groupId, 'g2');
+});
+
+test('Fortsetzen (offline): dieselbe Gruppe bleibt aktiv, Änderungen werden später gespeichert', async () => {
+  const server = fakeServer({ n: 0 });
+  let down = true;
+  const backend = { load: () => (down ? Promise.reject(new Error('offline')) : server.load()), save: (...a) => (down ? Promise.reject(new Error('offline')) : server.save(...a)) };
+  const dev = { state: { n: 0 } };
+  const sync = createSync({ backend, getShared: () => dev.state, delay: 1, retryMs: 5, applyRemote: (d, fns) => { dev.state = structuredClone(d); fns.forEach((f) => f(dev.state)); } });
+  await assert.rejects(sync.start('g', { resume: true }));
+  assert.equal(sync.groupId, 'g');
+  assert.equal(sync.status, 'offline');
+  dev.state.n = 5;
+  sync.noteLocalChange((s) => { s.n = 5; });
+  down = false;
+  await settle(); await settle();
+  assert.equal(server.row.data.n, 5);
+});

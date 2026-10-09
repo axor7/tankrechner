@@ -19,6 +19,7 @@ export function createSync({ backend, getShared, applyRemote, onStatus = () => {
   let timer = null;
   let pushing = false;
   let status = 'synced';
+  let startToken = 0; // jeder Start/Stopp bekommt eine neue Nummer – ein überholter Ladevorgang wird verworfen
 
   const setStatus = (s) => { if (s !== status) { status = s; onStatus(s); } };
 
@@ -70,21 +71,39 @@ export function createSync({ backend, getShared, applyRemote, onStatus = () => {
     get status() { return status; },
     get pendingCount() { return pending.length; },
 
-    /** Gruppe laden und ab jetzt synchronisieren. */
-    async start(id) {
-      groupId = id;
+    /**
+     * Gruppe laden und ab jetzt synchronisieren. Solange geladen wird, ist keine Gruppe aktiv –
+     * so landet nichts von vorher (andere Gruppe) in der neuen.
+     * resume: dieselbe Gruppe wie zuletzt (Daten auf dem Gerät gehören schon dazu) – Änderungen werden
+     * sofort gemerkt, und klappt das Laden nicht (offline), bleibt sie aktiv und wird später nachgeladen.
+     */
+    async start(id, { resume = false } = {}) {
+      const token = ++startToken;
+      groupId = resume ? id : null;
       pending = [];
-      const remote = await backend.load(id);
-      if (groupId !== id) return;
+      clearTimeout(timer);
+      let remote;
+      try {
+        remote = await backend.load(id);
+      } catch (e) {
+        if (resume && token === startToken) setStatus('offline');
+        throw e;
+      }
+      if (token !== startToken) return false;
+      groupId = id;
       version = remote.version;
       serverJson = JSON.stringify(remote.data);
       applyRemote(remote.data, []);
       setStatus('synced');
+      return true;
     },
 
     stop() {
+      startToken++;
       groupId = null;
       pending = [];
+      version = 0;
+      serverJson = '';
       clearTimeout(timer);
     },
 

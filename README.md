@@ -13,7 +13,7 @@ Handy: drei Reiter unten · Tablet/Computer: Seitenleiste links. Alles Weitere �
 |---|---|---|
 | **Fahrten** | Was steht an? | Hinweise nur, wenn man etwas tun kann („Daniel fällt aus · Übernimmst du?“, Sperrung auf eurer Strecke, Umleitung); **nächste Fahrt** (Fahrer: Abfahrt und Abholzeiten, Mitfahrer: eigene Abholzeit mit **Dabei / Nicht dabei**); **nächste Tage** als Liste (Ferien als eine Zeile, Status mit einem Tipp umschalten, Tag antippen = Details); **Mein Plan** (Rhythmus, Abwesend) |
 | **Geld** | Wer schuldet wem? | Ein Betrag oben, darunter ein Eintrag pro Person → Fenster mit **bezahlen** (PayPal), „Ich habe bezahlt“ bzw. **Abhaken** mit Zahlungsart, **Erinnern** per WhatsApp, Wochen und Fahrten; Bestätigen mit Ja/Nein; **Deine Kosten** diese/nächste Woche, **Fahrt ausrechnen**, Verlauf |
-| **Gruppe** | Wer und wie? | Ich (Adresse, PayPal, „Ich kann auch fahren“), **Mitfahrer** (hinzufügen, Rhythmus, Abwesenheit, persönlich einladen), **Einladen**; **Fahrt**: Strecke, Uhrzeiten, Wer fährt, Fahrfrei; **Kosten**: Auto & Sprit, Aufteilung; Konto, Mitglieder & Rechte, Verlauf, Daten & Infos |
+| **Gruppe** | Wer und wie? | Titel antippen = **Deine Gruppen** (wechseln, neu, beitreten, verlassen, löschen); Ich (Adresse, PayPal, „Ich kann auch fahren“), **Mitfahrer** (hinzufügen, Rhythmus, Abwesenheit, persönlich einladen), **Einladen**; **Fahrt**: Strecke, Uhrzeiten, Wer fährt, Fahrfrei; **Kosten**: Auto & Sprit, Aufteilung; Konto, Mitglieder & Rechte, Verlauf, Daten & Infos |
 
 **Strecke** (aus „Gruppe“) ist die einzige Seite mit Karte: Hin-/Rückfahrt, Halte in Reihenfolge (Admins: „Ändern“ für Ziel, Start und Reihenfolge), Sperrungen mit Ausweichrouten, Baustellen.
 
@@ -23,6 +23,15 @@ Handy: drei Reiter unten · Tablet/Computer: Seitenleiste links. Alles Weitere �
 - **Einladen:** Gruppenlink, kurzer **Code** zum Abtippen (z. B. `K7M-4Q2`) und **QR-Code**. Wer so beitritt, wählt bei **„Wer bist du?“** seinen Platz aus. Auf Wunsch gibt es einen **persönlichen Link** für genau einen Platz – dann fragt die App nur noch „Bist du Max?“.
 - **Übernehmen:** Mit „Ja, das bin ich“ gehört der Platz der Person; alles Bisherige (Fahrten, Abrechnung, abgehakte Zahlungen) bleibt. Der Fahrer sieht unter „Gruppe“ „Max ist jetzt mit der App dabei“ mit **Passt** oder **Rückgängig** (entfernt das Konto, der Platz ist wieder frei).
 - Der Fahrer darf auch nach der Übernahme Fahrten für andere ändern; die Person sieht es.
+
+### Konto und mehrere Gruppen
+
+- **Meine Angaben** (Name, Adresse, Auto, PayPal) gehören zum Konto. Was man unter „Ich“ oder bei der Einrichtung einträgt, merkt sich das Konto automatisch; bestehende Angaben aus einer Gruppe werden einmalig übernommen. Ändern auch unter Gruppe → Konto.
+- **Neue Gruppe:** Name eingeben, dann läuft die Einrichtung wie beim ersten Mal – nur mit den Angaben aus dem Konto vorausgefüllt. Die neue Gruppe startet leer: Es werden nie Daten aus einer anderen Gruppe übernommen. „Zurück“ im ersten Schritt bricht ab und löscht die Gruppe wieder.
+- **Beitreten** (Link, Code, QR): Name, Abholadresse und PayPal kommen aus dem Konto; nur der Rhythmus wird noch gefragt.
+- **Wechseln:** Titel auf „Gruppe“ (Computer: unten in der Seitenleiste) → Gruppe antippen. Offene Änderungen werden vorher gespeichert; was noch im Hintergrund für die alte Gruppe lief, wird verworfen.
+- **Verlassen / Löschen:** unten auf „Gruppe“ oder unter „Deine Gruppen“ → „Bearbeiten“. Man bleibt angemeldet und landet in der vorigen Gruppe. Ist man der letzte Admin, wird jemand anderes Admin; ist man allein, wird die Gruppe gelöscht. Ohne Gruppe erscheint „Hallo …“ mit „Neue Gruppe erstellen“ und „Beitreten“.
+- **Auf diesem Gerät:** Wer ohne Konto angefangen hat, behält diese Gruppe nach dem Anmelden (in der Liste „Auf diesem Gerät“) und kann sie mit „Gemeinsam nutzen“ hochladen.
 
 ### Wer fährt wann?
 
@@ -62,6 +71,8 @@ Einrichtung einmalig: `supabase/setup.sql` im SQL Editor ausführen (bei Nachfra
 und unter Authentication → Email „Confirm email“ ausschalten (der eingebaute Mailversand erreicht nur Mitglieder des Supabase-Teams).
 Nach einem Update das Skript einfach erneut ausführen (es ist gefahrlos wiederholbar) – seit Etappe 1 nötig für die **kurzen Einladungscodes**
 (6 Zeichen ohne Verwechsler); vorher funktionieren die alten, langen Codes weiter. Neue Codes gibt es danach über Gruppe → Einladen → „Neuen Code erstellen“.
+Seit der Kontoverwaltung dürfen nach dem erneuten Ausführen **alle Admins** eine Gruppe löschen (vorher nur, wer sie erstellt hat).
+Die Angaben des Kontos (Name, Adresse, Auto, PayPal) liegen in den Nutzerdaten von Supabase Auth – dafür ist keine Tabelle nötig.
 
 **Passwort vergessen** (optional, braucht E-Mail-Versand):
 1. Authentication → URL Configuration: „Site URL“ auf die Adresse der Seite setzen (z. B. `https://axor7.github.io/tankrechner/`) und dieselbe Adresse unter „Redirect URLs“ eintragen.
@@ -121,16 +132,16 @@ js/fuel.js            Spritpreis: Tankstellen an der Strecke, automatisch aktual
 js/screens/rides.js   Fahrten: Hinweise, nächste Fahrt, nächste Tage; Fenster Tag, Rhythmus, Abwesend
 js/screens/money.js   Geld: Betrag, pro Person (bezahlen, abhaken, erinnern), bestätigen, Kosten, Verlauf
 js/screens/tripcalc.js Fahrt ausrechnen
-js/screens/group.js   Gruppe: ich, Mitfahrer, Einladen, Fahrt, Kosten, Konto, Mitglieder, Verlauf, Daten & Infos
+js/screens/group.js   Gruppe: Deine Gruppen, ich, Mitfahrer, Einladen, Fahrt, Kosten, Konto, Mitglieder, Verlauf, Daten & Infos
 js/screens/route.js   Strecke: Hin/Rück, Sperrung & Umleitung, Halte und Reihenfolge, Baustellen
-js/screens/start.js   Abläufe im Vollbild: Willkommen, Anmelden, Einrichten, „Bist du Max?“ / „Wer bist du?“, erste Angaben
+js/screens/start.js   Abläufe im Vollbild: Willkommen, Anmelden, Übersicht ohne Gruppe, neue Gruppe, Einrichten, „Bist du Max?“ / „Wer bist du?“, erste Angaben
 js/actions.js         Alle Änderungen: Rechte, Speicherort (Profil/gemeinsam), Protokoll
 js/model.js           Datenmodell: Rhythmus, Tage, Abwesenheit, fahrfreie Zeiten, Fahrer-Plan, Strecke je Fahrt (getestet)
 js/derived.js         Berechnete Werte (Wochen, Beträge, Bestätigungen)
 js/calc.js            Kosten & Aufteilung, Abholzeiten (getestet)
 js/debts.js           Offene Beträge je Woche (getestet)
-js/sync.js            Synchronisation mit Konfliktbehandlung (getestet)
-js/account.js         Konto, Fahrgemeinschaft, Rollen, Einladungen, Platz übernehmen
+js/sync.js            Synchronisation mit Konfliktbehandlung und sicherem Gruppenwechsel (getestet)
+js/account.js         Konto (meine Angaben), Gruppen anlegen/wechseln/verlassen/löschen, Rollen, Einladungen, Platz übernehmen
 js/cloud.js           Supabase-Anbindung
 js/pay.js             PayPal.me-Links und Nachrichten (getestet)
 js/detours.js         Ausweichrouten: Sperrung meiden (Valhalla), nachrechnen (OSRM), aussortieren (getestet)

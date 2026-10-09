@@ -3,14 +3,14 @@
 import { state, update, subscribe, personById } from './state.js';
 import { reverseGeocode } from './api.js';
 import { MapView } from './map.js';
-import { initAccount, inGroup, isAdmin, claims, newClaims, groupName, syncState } from './account.js';
+import { initAccount, inGroup, isAdmin, isLoggedIn, claims, newClaims, groupName, syncState, refreshGroups } from './account.js';
 import { me, adminSet, setAddress } from './actions.js';
 import { myBalance, toConfirm } from './derived.js';
 import { setupVersion } from './version.js';
 import { startAutoRefresh } from './fuel.js';
-import { setHooks, background, fullStops, displayRoute, routeDir, routeInfo, getTraffic, getSuggestions, loadTraffic, mapIncidents } from './engine.js';
+import { setHooks, background, fullStops, displayRoute, routeDir, routeInfo, getTraffic, getSuggestions, loadTraffic, mapIncidents, resetGroupCaches } from './engine.js';
 import { statusText, cleanTitle } from './traffic.js';
-import { h, icon, toast, initSheets, renderSheet, sheetIsOpen } from './kit.js';
+import { h, icon, toast, initSheets, renderSheet, sheetIsOpen, openSheet, closeSheet } from './kit.js';
 import { renderRides } from './screens/rides.js';
 import { renderMoney } from './screens/money.js';
 import { renderGroup } from './screens/group.js';
@@ -111,9 +111,10 @@ function renderNav(screen) {
   $('rail').replaceChildren(
     h('div', { class: 'rail-brand' }, h('span', { class: 'app-mark' }, '⛽'), h('strong', {}, 'Tankrechner')),
     ...TABS.map((t) => item(t, 'rail-item')),
-    h('div', { class: 'rail-foot' },
+    h('button', { type: 'button', class: 'rail-foot', title: 'Gruppe wechseln', onclick: () => { refreshGroups(); openSheet('groups'); } },
       inGroup() ? h('span', { class: `sync ${syncState()}`, title: { synced: 'Gespeichert', saving: 'Wird gespeichert …', offline: 'Offline' }[syncState()] }) : null,
-      h('span', {}, mine?.name || '', h('small', {}, groupName() || 'Nur auf diesem Gerät'))));
+      h('span', {}, mine?.name || '', h('small', {}, groupName() || (isLoggedIn() ? 'Auf diesem Gerät' : 'Nur auf diesem Gerät'))),
+      icon('chevron-down', { size: 16 })));
 }
 
 // ---------- Zeichnen ----------
@@ -172,6 +173,8 @@ function init() {
   initSheets();
   subscribe(requestRender);
   document.addEventListener('account-changed', requestRender);
+  // Gruppe gewechselt: Fenster zu, Zwischenstände (Vorschläge, Verkehrsmeldungen, Karte) der vorigen Gruppe verwerfen
+  document.addEventListener('group-switched', () => { closeSheet(); resetGroupCaches(); mapKeys = {}; });
   document.addEventListener('sync-status', () => {
     const dot = document.querySelector('#rail .sync');
     if (dot) dot.className = `sync ${syncState()}`;
