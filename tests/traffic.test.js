@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { autobahnRefs, parseTimes, timeStatus, isCurrent, statusText, fmtRemaining, normalize, alongRoute } from '../js/traffic.js';
+import { autobahnRefs, parseTimes, timeStatus, isCurrent, statusText, fmtRemaining, normalize, alongRoute, trafficStamp } from '../js/traffic.js';
 
 const at = (y, m, d, hh = 0, mm = 0) => new Date(y, m - 1, d, hh, mm);
 
@@ -92,4 +92,12 @@ test('Doppelte Meldungen (je Fahrstreifen) nur einmal', () => {
   const a = item('a1', [[49.0001, 8.43], [49.0001, 8.45]]);
   const b = { ...item('a2', [[49.0001, 8.43], [49.0001, 8.45]]), title: a.title };
   assert.equal(alongRoute([a, b], route).length, 1);
+});
+
+test('trafficStamp: Uhrzeit heute, Datum an anderen Tagen, „nicht mehr aktuell“ nach 30 Minuten', () => {
+  const now = new Date(2026, 10, 4, 14, 50);
+  assert.equal(trafficStamp(0, now), null);
+  assert.deepEqual(trafficStamp(new Date(2026, 10, 4, 14, 32).getTime(), now), { text: '14:32', stale: false });
+  assert.deepEqual(trafficStamp(new Date(2026, 10, 4, 9, 5).getTime(), now), { text: '09:05', stale: true });
+  assert.deepEqual(trafficStamp(new Date(2026, 10, 3, 18, 0).getTime(), now), { text: '3.11., 18:00', stale: true });
 });

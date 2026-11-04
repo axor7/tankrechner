@@ -221,14 +221,21 @@ async function loadTrafficNow(force = false) {
   const info = dirs.map((d) => routeInfo(d));
   const routes = Object.fromEntries(dirs.map((d) => [d, displayRoute(d)]));
   const normals = Object.fromEntries(dirs.map((d) => [d, displayRoute(d, [])]));
-  if (info.some((i) => !i || i.loading) || dirs.some((d) => !routes[d]?.coords || !normals[d]?.coords) || traffic.loading) return;
+  if (info.some((i) => !i || i.loading) || traffic.loading) return;
+  if (info.some((i) => i.error)) {
+    // Ohne Route keine Prüfung – das soll man sehen, statt „keine Sperrung“ zu glauben
+    if (!traffic.error) { traffic = { ...traffic, at: Date.now(), loading: false, ready: true, error: 'Route konnte nicht berechnet werden' }; rerender(); }
+    return;
+  }
+  if (dirs.some((d) => !routes[d]?.coords || !normals[d]?.coords)) return;
   const roads = autobahnRefs(info.flatMap((i) => i.refs || []));
   const key = `${dirs.map((d) => `${routes[d].key}/${normals[d].key}`).join('|')}|${roads.join()}`;
-  if (!force && traffic.key === key && Date.now() - traffic.at < 15 * 60e3) return;
+  // Neu laden nach 15 Minuten – nach einem Fehler schon nach 2 Minuten
+  if (!force && traffic.key === key && Date.now() - traffic.at < (traffic.error ? 2 : 15) * 60e3) return;
   traffic = { ...traffic, loading: true };
+  if (force) rerender();
   const gen = dataGen();
   try {
-    if (info.some((i) => i.error)) throw new Error('Straßen der Route nicht ermittelt');
     const now = new Date();
     const items = (await Promise.all(roads.map((r) => roadEvents(r, { force })))).flat().filter((i) => isCurrent(i.times, now));
     if (gen !== dataGen()) return;
@@ -240,11 +247,21 @@ async function loadTrafficNow(force = false) {
     traffic = { hin: along('hin'), rueck: routes.rueck ? along('rueck') : [], roads, at: Date.now(), key, loading: false, ready: true, error: '' };
   } catch (e) {
     if (gen !== dataGen()) return;
-    traffic = { ...traffic, roads, at: Date.now(), key, loading: false, ready: true, error: e.message || 'Fehler' };
+    traffic = { ...traffic, roads, at: Date.now(), key, loading: false, ready: true, error: /^Autobahn-Daten/.test(e.message || '') ? e.message : 'Autobahn-Daten nicht erreichbar' };
   }
   rerender();
 }
 export const loadTraffic = debounce(loadTrafficNow, 300);
+/** „Aktualisieren“: sofort neu laden, ohne die 15 Minuten abzuwarten. */
+export const refreshTraffic = () => loadTrafficNow(true);
+
+/** Bei offener App von selbst nachladen: jede Minute nachsehen (neu geladen wird nach 15 Minuten)
+ *  und sofort, wenn man in die App zurückkehrt. wanted(): soll dieses Gerät gerade mitprüfen? */
+export function startTrafficRefresh(wanted) {
+  const tick = () => { if (!document.hidden && wanted()) loadTraffic(); };
+  setInterval(tick, 60e3);
+  document.addEventListener('visibilitychange', tick);
+}
 
 const isoDay = (d) => (d ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` : null);
 

@@ -4,8 +4,8 @@ import { state, update, model, personById, todayIso } from '../state.js';
 import { effectiveOrder, isActive } from '../model.js';
 import { isAdmin } from '../account.js';
 import { adminSet, setAddress, applyDetour, setDetourDates, deleteDetour, normalRouteFromToday } from '../actions.js';
-import { isClosure, statusText, cleanTitle } from '../traffic.js';
-import { routeDir, displayRoute, routeInfo, variantInfo, findDetours, clearSuggestions, getSuggestions, getTraffic, loadTraffic, refreshRoute, relevantClosures } from '../engine.js';
+import { isClosure, statusText, cleanTitle, trafficStamp } from '../traffic.js';
+import { routeDir, displayRoute, routeInfo, variantInfo, findDetours, clearSuggestions, getSuggestions, getTraffic, loadTraffic, refreshTraffic, refreshRoute, relevantClosures } from '../engine.js';
 import { addressInput } from '../address.js';
 import { h, icon, header, section, list, card, row, switchRow, seg, btn, note, field, avatar, attempt, toast } from '../kit.js';
 import { nameOf, shortLabel } from '../plan.js';
@@ -147,6 +147,20 @@ function incidents(dir) {
   { foot: 'Nur Autobahnen (Autobahn GmbH des Bundes).' });
 }
 
+/** Wie aktuell sind Sperrungen & Baustellen? Mit „Aktualisieren“ – und deutlich, wenn das Laden nicht geklappt hat. */
+export function trafficStatus() {
+  const t = getTraffic();
+  const st = trafficStamp(t.at);
+  const text = t.loading ? 'Sperrungen & Baustellen werden geladen …'
+    : t.error ? `Sperrungen & Baustellen nicht geprüft: ${t.error}${st ? ` (${st.text} Uhr)` : ''}.`
+      : st ? `Sperrungen & Baustellen: Stand ${st.text} Uhr${st.stale ? ' – nicht mehr aktuell' : ''}`
+        : 'Sperrungen & Baustellen noch nicht geladen';
+  return h('p', { class: `traffic-status${t.error ? ' bad' : st?.stale ? ' stale' : ''}` },
+    icon(t.error ? 'circle-alert' : t.loading ? 'refresh-cw' : 'clock', { size: 13 }),
+    h('span', { class: 'ts-text' }, text),
+    t.loading ? null : h('button', { type: 'button', class: 'ts-btn', onclick: () => refreshTraffic() }, t.error ? 'Erneut versuchen' : 'Aktualisieren'));
+}
+
 // ---------- Bildschirm ----------
 
 export function renderRoute(el) {
@@ -173,6 +187,7 @@ export function renderRoute(el) {
     h('div', { class: 'route-sum' },
       h('strong', {}, r ? `${fmtKm(r.distance / 1000)} · ${fmtDuration(r.duration)}` : 'wird berechnet …'),
       det ? h('span', {}, `mit Umleitung über ${det.place}${info?.baseDistance && r ? ` (${plus((r.distance - info.baseDistance) / 1000, 'km')})` : ''}`) : h('span', {}, 'wenn alle mitfahren')),
+    trafficStatus(),
     ...relevantClosures(dir).map((x) => closureCard(dir, x, admin)),
     stopsSection(dir, admin),
     incidents(dir) || h('span'),

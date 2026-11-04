@@ -6,9 +6,9 @@ import { planOn, absenceOn, activeDetours, isActive } from '../model.js';
 import { isAdmin, inGroup } from '../account.js';
 import { me, setDay, setDriver, setDayOff, volunteerDrive, setPlan, addAbsence, removeAbsence } from '../actions.js';
 import { dirsNow, tripResult } from '../derived.js';
-import { relevantClosures } from '../engine.js';
+import { relevantClosures, getTraffic, refreshTraffic } from '../engine.js';
 import { openTripCalc } from './tripcalc.js';
-import { cleanTitle } from '../traffic.js';
+import { cleanTitle, trafficStamp } from '../traffic.js';
 import { planFor } from '../model.js';
 import { h, icon, header, section, list, card, row, switchRow, seg, btn, note, banner, field, avatar, noApp, registerSheet, openSheet, closeSheet, sheet, attempt, toast } from '../kit.js';
 import { relDay, longDay, span, weekdayShort, nameOf, shortLabel, rhythmText, absenceText, absencesOf, REASONS, nextRideDate, timedStops, personTime, driverGaps, datesText } from '../plan.js';
@@ -111,12 +111,18 @@ function alerts(mine) {
   if (det) {
     out.push(banner({ tone: 'info', ic: 'construction', title: `${DIR[det.dir] || 'Strecke'} mit Umleitung`, text: `über ${det.place}${det.until ? ` · bis ${fmtDate(det.until)}` : ''}`, onClick: go }));
   } else if (isAdmin()) {
+    const t = getTraffic();
+    const stamp = trafficStamp(t.at);
+    if (t.error) {
+      // Nicht still „keine Sperrung“ zeigen, wenn gar nicht geprüft werden konnte
+      out.push(banner({ tone: 'warn', ic: 'circle-alert', title: 'Sperrungen nicht geprüft', text: `${t.error}${stamp ? ` (${stamp.text} Uhr)` : ''} · Erneut versuchen`, onClick: () => refreshTraffic() }));
+    }
     // Nur Sperrungen, durch die eure Route wirklich führt (gleiche Prüfung wie auf „Strecke“)
     for (const dir of dirsNow()) {
       const c = relevantClosures(dir).find((x) => x.passes);
       if (!c) continue;
       const when = c.upcoming && c.it.times.start ? `ab ${fmtDate(c.zone.from, { weekday: true })}` : 'jetzt';
-      out.push(banner({ tone: 'bad', ic: 'octagon-x', title: `${DIR[dir]}: Sperrung ${when}`, text: `${cleanTitle(c.it)} · Umleitung wählen`, onClick: () => update((s) => { s.ui.screen = 'route'; s.ui.routeDir = dir; }) }));
+      out.push(banner({ tone: 'bad', ic: 'octagon-x', title: `${DIR[dir]}: Sperrung ${when}`, text: `${cleanTitle(c.it)} · Umleitung wählen${stamp ? ` · Stand ${stamp.text} Uhr` : ''}`, onClick: () => update((s) => { s.ui.screen = 'route'; s.ui.routeDir = dir; }) }));
       break;
     }
   }

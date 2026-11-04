@@ -8,7 +8,7 @@ import { me, adminSet, setAddress } from './actions.js';
 import { myBalance, toConfirm } from './derived.js';
 import { setupVersion } from './version.js';
 import { startAutoRefresh } from './fuel.js';
-import { setHooks, background, fullStops, displayRoute, routeDir, routeInfo, getTraffic, getSuggestions, loadTraffic, mapIncidents, resetGroupCaches } from './engine.js';
+import { setHooks, background, fullStops, displayRoute, routeDir, routeInfo, getTraffic, getSuggestions, loadTraffic, mapIncidents, resetGroupCaches, startTrafficRefresh } from './engine.js';
 import { statusText, cleanTitle } from './traffic.js';
 import { h, icon, toast, initSheets, renderSheet, sheetIsOpen, openSheet, closeSheet } from './kit.js';
 import { renderRides } from './screens/rides.js';
@@ -186,6 +186,8 @@ function init() {
   initAccount();
   requestRender();
   startAutoRefresh();
+  // Sperrungen: Admins (Hinweis auf „Fahrten“) und alle auf „Strecke“
+  startTrafficRefresh(() => !!state.destination?.lat && (isAdmin() || state.ui.screen === 'route'));
 }
 
 init();

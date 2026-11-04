@@ -180,6 +180,15 @@ export function normalize(x, road) {
   };
 }
 
+/** Wann wurde die Verkehrslage zuletzt abgerufen? → { text: „14:32“ (heute) oder „3.11., 14:32“, stale: älter als 30 Minuten } oder null. */
+export function trafficStamp(at, now = new Date()) {
+  if (!at) return null;
+  const d = new Date(at);
+  const hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  const sameDay = d.toDateString() === now.toDateString();
+  return { text: sameDay ? hm : `${d.getDate()}.${d.getMonth() + 1}., ${hm}`, stale: now.getTime() - d.getTime() > 30 * 60e3 };
+}
+
 const cache = new Map(); // Autobahn → { at, items }
 
 /** Sperrungen und Baustellen einer Autobahn (15 Minuten zwischengespeichert). */

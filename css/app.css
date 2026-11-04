@@ -379,6 +379,11 @@ button.banner { cursor: pointer; }
 .route-sum { display: flex; flex-direction: column; gap: 2px; padding: 0 4px; }
 .route-sum strong { font-size: 22px; font-family: var(--font-d); }
 .route-sum span { font-size: 14px; color: var(--text-2); }
+.traffic-status { margin: 0; padding: 0 4px; font-size: 13px; line-height: 1.4; color: var(--text-2); }
+.traffic-status > .ic { display: inline-flex; vertical-align: -2px; margin-right: 5px; }
+.traffic-status .ts-btn { border: 0; background: none; padding: 0; margin-left: 6px; font: inherit; font-weight: 500; color: var(--accent); cursor: pointer; }
+.traffic-status.stale .ts-text { color: var(--warn); }
+.traffic-status.bad .ts-text, .traffic-status.bad > .ic { color: var(--bad); }
 .closure { gap: 12px; }
 .closure.bad { box-shadow: inset 4px 0 0 var(--bad), var(--shadow); }
 .closure.ok { box-shadow: inset 4px 0 0 var(--good), var(--shadow); }
