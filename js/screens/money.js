@@ -159,7 +159,16 @@ export function renderMoney(el) {
 
 // ---------- Fenster: offene Wochen zwischen zwei Personen ----------
 
-const pairUi = { key: '', via: 'cash', open: new Set() };
+// skip: abgewählte Wochen (neue Wochen sind automatisch ausgewählt), open: aufgeklappte Wochen
+const pairUi = { key: '', via: 'cash', open: new Set(), skip: new Set() };
+
+/** Runder Haken zum Aus-/Abwählen einer Woche. */
+function pick(on, label, onToggle) {
+  return h('button', {
+    type: 'button', class: `pick ${on ? 'on' : ''}`, role: 'checkbox', 'aria-checked': String(on), 'aria-label': label,
+    onclick: onToggle,
+  }, on ? icon('check', { size: 15 }) : null);
+}
 
 function weekTrips(pid, monday) {
   const list = entries(monday, addDays(monday, 6)).filter((e) => e.trip.legs.some((l) => l.includes(pid)) || e.trip.driver === pid);
@@ -175,7 +184,7 @@ registerSheet('pair', ({ from, to }) => {
   const p = pairOf(from, to);
   if (!p) return null;
   const mine = me();
-  if (pairUi.key !== `${from}|${to}`) Object.assign(pairUi, { key: `${from}|${to}`, via: 'cash', open: new Set() });
+  if (pairUi.key !== `${from}|${to}`) Object.assign(pairUi, { key: `${from}|${to}`, via: 'cash', open: new Set(), skip: new Set() });
   const iPay = from === mine;
   const iGet = to === mine;
   const due = p.items.filter((d) => !d.pending);
@@ -183,6 +192,13 @@ registerSheet('pair', ({ from, to }) => {
   const pp = paypalUser(personById(to)?.paypal);
   const canMark = isAdmin() || iPay || iGet;
   const redraw = () => update(() => {});
+  // Ausgewählte Wochen: nur diese werden bezahlt bzw. abgehakt
+  const sel = due.filter((d) => !pairUi.skip.has(d.key));
+  const selTotal = Math.round(sel.reduce((a, d) => a + d.open, 0) * 100) / 100;
+  const partial = sel.length < due.length;
+  const weeksTxt = (n) => `${n} ${n === 1 ? 'Woche' : 'Wochen'}`;
+  const choose = canMark && due.length > 1; // bei nur einer Woche gibt es nichts zu wählen
+  const toggle = (key) => { pairUi.skip.has(key) ? pairUi.skip.delete(key) : pairUi.skip.add(key); redraw(); };
   const text = paymentMessage({
     fromName: nameOf(from), toName: nameOf(to), paypal: pp,
     items: due.map((d) => ({ label: `${kw(d.week)} (${span(d.week, addDays(d.week, 6))})`, amount: d.open, details: `${d.trips} Fahrten` })),
@@ -192,13 +208,15 @@ registerSheet('pair', ({ from, to }) => {
     title, sub: p.pendingTotal > 0 ? `${fmtEuro(p.pendingTotal)} gemeldet – wartet auf ${nameOf(to)}` : null,
     body: [
       h('div', { class: 'big-amount' }, fmtEuro(p.total)),
+      choose && partial ? h('p', { class: 'sel-info' }, sel.length ? `Ausgewählt: ${weeksTxt(sel.length)} · ${fmtEuro(selTotal)}` : 'Keine Woche ausgewählt') : null,
       dueTotal > 0 && canMark ? h('div', { class: 'stack' },
-        iPay && pp ? paypalButton(pairUi.key, dueTotal, paypalLink(pp, dueTotal), () => { pairUi.via = 'paypal'; setTimeout(redraw, 350); }) : null,
+        iPay && pp && sel.length ? paypalButton(`${pairUi.key}|${sel.map((d) => d.key).join(',')}`, selTotal, paypalLink(pp, selTotal), () => { pairUi.via = 'paypal'; setTimeout(redraw, 350); }) : null,
         seg(Object.entries(VIA), pairUi.via, (v) => { pairUi.via = v; redraw(); }),
-        btn(iPay ? 'Ich habe bezahlt' : 'Als bezahlt abhaken', {
-          kind: iPay && pp ? 'tinted' : 'primary', full: true, ic: 'check',
+        btn(sel.length ? `${iPay ? 'Ich habe bezahlt' : 'Als bezahlt abhaken'}${partial ? ` (${weeksTxt(sel.length)})` : ''}` : 'Erst Wochen auswählen', {
+          kind: iPay && pp ? 'tinted' : 'primary', full: true, ic: 'check', disabled: !sel.length,
           onClick: () => attempt(() => {
-            const waits = markPaid(due, true, pairUi.via);
+            const waits = markPaid(sel, true, pairUi.via);
+            for (const d of sel) pairUi.skip.delete(d.key);
             toast(waits ? `Gemeldet – ${nameOf(to)} bestätigt noch` : 'Abgehakt', 'ok');
             closeSheet();
           }),
@@ -211,14 +229,23 @@ registerSheet('pair', ({ from, to }) => {
         btn('Text kopieren', { kind: 'plain', full: true, ic: 'copy', onClick: () => copyText(text, 'Text kopiert') })) : null,
       section('Wochen', list(...p.items.map((d) => {
         const open = pairUi.open.has(d.key);
-        return h('div', {},
-          row({
-            title: `${kw(d.week)} · ${span(d.week, addDays(d.week, 6))}`, sub: d.pending ? 'gemeldet' : `${d.trips} Fahrten · ${fmtKm(d.km)}${d.paid > 0 ? ` · ${fmtEuro(d.paid)} schon bezahlt` : ''}`,
-            value: fmtEuro(d.open), chevron: false,
-            onClick: () => { open ? pairUi.open.delete(d.key) : pairUi.open.add(d.key); redraw(); },
-          }),
+        const label = `${kw(d.week)} · ${span(d.week, addDays(d.week, 6))}`;
+        const r = row({
+          title: label, sub: d.pending ? 'gemeldet – wartet auf Bestätigung' : `${d.trips} Fahrten · ${fmtKm(d.km)}${d.paid > 0 ? ` · ${fmtEuro(d.paid)} schon bezahlt` : ''}`,
+          value: fmtEuro(d.open), chevron: false,
+          onClick: () => { open ? pairUi.open.delete(d.key) : pairUi.open.add(d.key); redraw(); },
+        });
+        return h('div', { class: 'week-item' },
+          choose ? h('div', { class: 'week-line' },
+            d.pending ? h('span', { class: 'pick is-pending', title: 'gemeldet' }, icon('clock', { size: 14 })) : pick(!pairUi.skip.has(d.key), `${label} auswählen`, () => toggle(d.key)),
+            r) : r,
           open ? weekTrips(from, d.week) : null);
-      })), { foot: 'Antippen zeigt die Fahrten. Jede Strecke wird unter denen geteilt, die dort im Auto sitzen.' }),
+      })), {
+        action: choose ? h('button', { type: 'button', class: 'link-btn', onclick: () => { if (sel.length === due.length) for (const d of due) pairUi.skip.add(d.key); else pairUi.skip.clear(); redraw(); } }, sel.length === due.length ? 'Keine' : 'Alle') : null,
+        foot: choose
+          ? 'Mit dem Haken wählst du, welche Wochen bezahlt werden. Woche antippen zeigt die Fahrten.'
+          : 'Antippen zeigt die Fahrten. Jede Strecke wird unter denen geteilt, die dort im Auto sitzen.',
+      }),
     ],
   });
 });
